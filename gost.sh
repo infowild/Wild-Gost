@@ -1231,7 +1231,262 @@ add_service_menu() {
     done
 }
 
-# ---------- delete / list ----------
+# ---------- edit / delete / list ----------
+
+show_service_detail() {
+    local index="$1"
+    local name addr htype ltype chain target up_addr up_conn up_dial up_path
+    name=$(jq -r ".services[$index].name" "$CONFIG_FILE")
+    addr=$(jq -r ".services[$index].addr" "$CONFIG_FILE")
+    htype=$(jq -r ".services[$index].handler.type // \"-\"" "$CONFIG_FILE")
+    ltype=$(jq -r ".services[$index].listener.type // \"-\"" "$CONFIG_FILE")
+    chain=$(jq -r ".services[$index].handler.chain // .services[$index].listener.chain // empty" "$CONFIG_FILE")
+    target=$(jq -r ".services[$index].forwarder.nodes[0].addr // \"-\"" "$CONFIG_FILE")
+    up_addr="-"; up_conn="-"; up_dial="-"; up_path="-"
+    if [ -n "$chain" ]; then
+        up_addr=$(jq -r --arg c "$chain" '.chains[]? | select(.name==$c) | .hops[0].nodes[0].addr // "-"' "$CONFIG_FILE")
+        up_conn=$(jq -r --arg c "$chain" '.chains[]? | select(.name==$c) | .hops[0].nodes[0].connector.type // "-"' "$CONFIG_FILE")
+        up_dial=$(jq -r --arg c "$chain" '.chains[]? | select(.name==$c) | .hops[0].nodes[0].dialer.type // "-"' "$CONFIG_FILE")
+        up_path=$(jq -r --arg c "$chain" '.chains[]? | select(.name==$c) | .hops[0].nodes[0].dialer.metadata.path // "-"' "$CONFIG_FILE")
+    fi
+    echo -e "${CYAN}--- Service detail ---${NC}"
+    echo -e "Name           : $name"
+    echo -e "Listen         : $addr"
+    echo -e "Handler        : $htype"
+    echo -e "Listener       : $ltype"
+    echo -e "Forward target : $target"
+    echo -e "Chain          : ${chain:-none}"
+    echo -e "Upstream addr  : $up_addr"
+    echo -e "Upstream conn  : $up_conn"
+    echo -e "Upstream dialer: $up_dial"
+    echo -e "WS path        : $up_path"
+}
+
+update_service_field() {
+    local index="$1"
+    local jq_expr="$2"
+    jq --argjson i "$index" "$jq_expr" "$CONFIG_FILE" > /tmp/gost_config_tmp.json \
+        && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+}
+
+update_chain_by_name() {
+    local chain_name="$1"
+    local jq_expr="$2"
+    jq --arg c "$chain_name" "$jq_expr" "$CONFIG_FILE" > /tmp/gost_config_tmp.json \
+        && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+}
+
+get_service_chain_name() {
+    local index="$1"
+    jq -r ".services[$index].handler.chain // .services[$index].listener.chain // empty" "$CONFIG_FILE"
+}
+
+ensure_chain_for_service() {
+    local index="$1"
+    local chain
+    chain=$(get_service_chain_name "$index")
+    if [ -n "$chain" ]; then
+        echo "$chain"
+        return 0
+    fi
+    local port
+    port=$(jq -r ".services[$index].addr" "$CONFIG_FILE" | tr -d ':')
+    [ -z "$port" ] && port="0"
+    chain="chain-edit-$port"
+    local ch
+    ch=$(build_chain_json "$chain" "relay" "127.0.0.1:1" "" "" "tcp" "" "")
+    append_chain "$ch"
+    jq --argjson i "$index" --arg c "$chain" \
+        '.services[$i].handler.chain = $c' \
+        "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+    echo "$chain"
+}
+
+edit_selected_service() {
+    local index="$1"
+    local chain new_val
+
+    while true; do
+        echo ""
+        show_service_detail "$index"
+        echo -e "\n${CYAN}What do you want to edit?${NC}"
+        echo -e "1) Listen port (e.g. 2018)"
+        echo -e "2) Forward target (e.g. 127.0.0.1:8080)"
+        echo -e "3) Upstream address (host:port)"
+        echo -e "4) Upstream connector (relay/socks5/http/...)"
+        echo -e "5) Upstream dialer/transport + path"
+        echo -e "6) Listener type on this server"
+        echo -e "7) Handler auth (username/password)"
+        echo -e "8) Upstream auth (username/password)"
+        echo -e "9) Show raw JSON (service + chain)"
+        echo -e "0) Back"
+        read -p "Choice: " ec
+        case $ec in
+            1)
+                prompt_or_back "New listen port" || continue
+                new_val="$REPLY_VALUE"
+                if [[ ! "$new_val" =~ ^[0-9]+$ ]] || [ "$new_val" -lt 1 ] || [ "$new_val" -gt 65535 ]; then
+                    echo -e "${RED}Invalid port!${NC}"; continue
+                fi
+                local cur_addr conflict
+                cur_addr=$(jq -r ".services[$index].addr" "$CONFIG_FILE")
+                if [ "$cur_addr" != ":$new_val" ]; then
+                    conflict=$(jq --arg p ":$new_val" '.services[]? | select(.addr == $p) | .name' "$CONFIG_FILE")
+                    if [ -n "$conflict" ]; then
+                        echo -e "${RED}Port :$new_val already used by $conflict${NC}"; continue
+                    fi
+                fi
+                update_service_field "$index" "(.services[\$i].addr) = \":$new_val\""
+                restart_gost
+                echo -e "${GREEN}Listen port updated to :$new_val${NC}"
+                ;;
+            2)
+                prompt_or_back "New forward target (host:port)" || continue
+                new_val="$REPLY_VALUE"
+                if [[ ! "$new_val" =~ ^[^[:space:]:]+:[0-9]+$ ]]; then
+                    echo -e "${RED}Invalid target! Use host:port${NC}"; continue
+                fi
+                jq --argjson i "$index" --arg t "$new_val" '
+                    .services[$i].forwarder = {
+                        nodes: [{
+                            name: (.services[$i].forwarder.nodes[0].name // ("target-" + (.services[$i].addr | ltrimstr(":")))),
+                            addr: $t
+                        }]
+                    }
+                ' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                restart_gost
+                echo -e "${GREEN}Forward target updated to $new_val${NC}"
+                ;;
+            3)
+                chain=$(ensure_chain_for_service "$index")
+                prompt_or_back "New upstream address (host:port)" || continue
+                new_val="$REPLY_VALUE"
+                if [[ ! "$new_val" =~ ^[^[:space:]:]+:[0-9]+$ ]]; then
+                    echo -e "${RED}Invalid address! Use host:port${NC}"; continue
+                fi
+                jq --arg c "$chain" --arg a "$new_val" \
+                    '(.chains[] | select(.name==$c) | .hops[0].nodes[0].addr) = $a' \
+                    "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                restart_gost
+                echo -e "${GREEN}Upstream address updated to $new_val${NC}"
+                ;;
+            4)
+                chain=$(ensure_chain_for_service "$index")
+                echo -e "1) relay  2) socks5  3) http  4) socks4  5) http2  6) ss  0) Back"
+                read -p "Choice: " cc
+                is_back_choice "$cc" && continue
+                local ctype=""
+                case $cc in
+                    1) ctype="relay" ;;
+                    2) ctype="socks5" ;;
+                    3) ctype="http" ;;
+                    4) ctype="socks4" ;;
+                    5) ctype="http2" ;;
+                    6) ctype="ss" ;;
+                    *) echo -e "${RED}Invalid!${NC}"; continue ;;
+                esac
+                jq --arg c "$chain" --arg t "$ctype" \
+                    '(.chains[] | select(.name==$c) | .hops[0].nodes[0].connector.type) = $t' \
+                    "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                restart_gost
+                echo -e "${GREEN}Upstream connector set to $ctype${NC}"
+                ;;
+            5)
+                chain=$(ensure_chain_for_service "$index")
+                select_dialer_transport || continue
+                local dialer_json
+                dialer_json=$(build_dialer_json "$DIALER_TYPE" "$WS_PATH" "$WS_HOST")
+                jq --arg c "$chain" --argjson d "$dialer_json" \
+                    '(.chains[] | select(.name==$c) | .hops[0].nodes[0].dialer) = $d' \
+                    "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                restart_gost
+                echo -e "${GREEN}Upstream dialer set to $TRANSPORT_LABEL${NC}"
+                ;;
+            6)
+                select_listener_transport || continue
+                local listener_json
+                listener_json=$(build_listener_json "$LISTENER_TYPE" "$WS_PATH")
+                jq --argjson i "$index" --argjson l "$listener_json" \
+                    '.services[$i].listener = $l' \
+                    "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                restart_gost
+                echo -e "${GREEN}Listener set to $TRANSPORT_LABEL${NC}"
+                ;;
+            7)
+                prompt_auth || continue
+                if [ -n "$USERNAME" ]; then
+                    jq --argjson i "$index" --arg u "$USERNAME" --arg p "$PASSWORD" \
+                        '.services[$i].handler.auth = {username:$u, password:$p}' \
+                        "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                else
+                    jq --argjson i "$index" 'del(.services[$i].handler.auth)' \
+                        "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                fi
+                restart_gost
+                echo -e "${GREEN}Handler auth updated.${NC}"
+                ;;
+            8)
+                chain=$(ensure_chain_for_service "$index")
+                prompt_auth || continue
+                if [ -n "$USERNAME" ]; then
+                    jq --arg c "$chain" --arg u "$USERNAME" --arg p "$PASSWORD" '
+                        (.chains[] | select(.name==$c) | .hops[0].nodes[0].connector.auth) = {username:$u, password:$p}
+                    ' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                else
+                    jq --arg c "$chain" '
+                        del((.chains[] | select(.name==$c) | .hops[0].nodes[0].connector.auth))
+                    ' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                fi
+                restart_gost
+                echo -e "${GREEN}Upstream auth updated.${NC}"
+                ;;
+            9)
+                chain=$(get_service_chain_name "$index")
+                echo -e "${CYAN}--- Service JSON ---${NC}"
+                jq --argjson i "$index" '.services[$i]' "$CONFIG_FILE"
+                if [ -n "$chain" ]; then
+                    echo -e "${CYAN}--- Chain JSON ---${NC}"
+                    jq --arg c "$chain" '.chains[]? | select(.name==$c)' "$CONFIG_FILE"
+                fi
+                pause_help
+                ;;
+            0|q|Q|b|B) return 0 ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
+}
+
+edit_service_menu() {
+    require_gost || return 1
+    while true; do
+        echo -e "\n${CYAN}--- Edit Service / Tunnel ---${NC}"
+        local services_count
+        services_count=$(jq '.services | length' "$CONFIG_FILE")
+        if [ "$services_count" -eq 0 ]; then
+            echo -e "${YELLOW}No services configured.${NC}"
+            return 0
+        fi
+        local i name addr type target chain
+        for ((i=0; i<services_count; i++)); do
+            name=$(jq -r ".services[$i].name" "$CONFIG_FILE")
+            addr=$(jq -r ".services[$i].addr" "$CONFIG_FILE")
+            type=$(jq -r ".services[$i].handler.type" "$CONFIG_FILE")
+            target=$(jq -r ".services[$i].forwarder.nodes[0].addr // \"-\"" "$CONFIG_FILE")
+            chain=$(jq -r ".services[$i].handler.chain // .services[$i].listener.chain // \"-\"" "$CONFIG_FILE")
+            echo -e "$((i+1))) $name | $addr | $type | target=$target | chain=$chain"
+        done
+        echo -e "0) Back"
+        read -p "Service number to edit (0=Back): " choice
+        if is_back_choice "$choice" || [ -z "$choice" ]; then
+            return 0
+        fi
+        if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "$services_count" ]; then
+            echo -e "${RED}Invalid!${NC}"
+            continue
+        fi
+        edit_selected_service $((choice-1))
+    done
+}
 
 delete_tunnel() {
     require_gost || return 1
@@ -1775,30 +2030,32 @@ main_menu() {
         echo -e "---------------------------------------------"
         echo -e "1) Install or Update GOST"
         echo -e "2) Add Service / Tunnel (all types)"
-        echo -e "3) Remove a Service"
-        echo -e "4) View Services & Config Summary"
-        echo -e "5) Policies (Bypass / Admission / Limiter / API / Metrics)"
-        echo -e "6) Manage System Service (Start/Stop/Restart)"
-        echo -e "7) Logs & Diagnostics ${GREEN}<- errors & troubleshooting${NC}"
-        echo -e "8) Show Raw Config JSON"
-        echo -e "9) Help / Tunnel usage guide"
-        echo -e "10) Completely Uninstall GOST"
+        echo -e "3) Edit Service / Tunnel ${GREEN}<- fix ports/target/upstream${NC}"
+        echo -e "4) Remove a Service"
+        echo -e "5) View Services & Config Summary"
+        echo -e "6) Policies (Bypass / Admission / Limiter / API / Metrics)"
+        echo -e "7) Manage System Service (Start/Stop/Restart)"
+        echo -e "8) Logs & Diagnostics"
+        echo -e "9) Show Raw Config JSON"
+        echo -e "10) Help / Tunnel usage guide"
+        echo -e "11) Completely Uninstall GOST"
         echo -e "0) Exit"
         echo -e "---------------------------------------------"
-        read -p "Enter your choice (0-10): " choice
+        read -p "Enter your choice (0-11): " choice
         case $choice in
             1) install_gost ;;
             2) add_service_menu ;;
-            3) delete_tunnel ;;
-            4) list_tunnels ;;
-            5) manage_policies_menu ;;
-            6) manage_service ;;
-            7) logs_menu ;;
-            8) show_raw_config ;;
-            9) help_menu ;;
-            10) uninstall_gost ;;
+            3) edit_service_menu ;;
+            4) delete_tunnel ;;
+            5) list_tunnels ;;
+            6) manage_policies_menu ;;
+            7) manage_service ;;
+            8) logs_menu ;;
+            9) show_raw_config ;;
+            10) help_menu ;;
+            11) uninstall_gost ;;
             0|q|Q) echo -e "${GREEN}Thanks for using Wild GOST. Bye!${NC}"; exit 0 ;;
-            *) echo -e "${RED}Invalid choice! Enter 0-10.${NC}" ;;
+            *) echo -e "${RED}Invalid choice! Enter 0-11.${NC}" ;;
         esac
         echo -e "\n${YELLOW}Press Enter to return to the main menu...${NC}"
         read -r
