@@ -61,6 +61,26 @@ restart_gost() {
     systemctl restart gost 2>/dev/null || true
 }
 
+# Return 0 if user chose back/cancel (0, q, Q, b, B)
+is_back_choice() {
+    case "$1" in
+        0|q|Q|b|B|back|Back) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# read into REPLY_VALUE; return 1 if user wants back
+prompt_or_back() {
+    local prompt="$1"
+    REPLY_VALUE=""
+    read -p "$prompt (0=Back): " REPLY_VALUE
+    if is_back_choice "$REPLY_VALUE"; then
+        echo -e "${YELLOW}بازگشت / لغو شد.${NC}"
+        return 1
+    fi
+    return 0
+}
+
 gen_uuid() {
     if command -v uuidgen &>/dev/null; then
         uuidgen | tr '[:upper:]' '[:lower:]'
@@ -260,8 +280,10 @@ select_listener_transport() {
     echo -e "13) http3       14) h2          15) h3          16) ssh"
     echo -e "17) sshd        18) dtls        19) icmp        20) pht"
     echo -e "21) ohttp (obfs) 22) otls (obfs) 23) ftcp        24) mtcp"
-    read -p "Your choice (1-24) [default: 1]: " tchoice
+    echo -e " 0) Back"
+    read -p "Your choice (0-24) [default: 1]: " tchoice
     [ -z "$tchoice" ] && tchoice="1"
+    is_back_choice "$tchoice" && return 1
     case $tchoice in
         1) LISTENER_TYPE="tcp"; TRANSPORT_LABEL="TCP" ;;
         2) LISTENER_TYPE="udp"; TRANSPORT_LABEL="UDP" ;;
@@ -309,8 +331,10 @@ select_dialer_transport() {
     echo -e " 7) kcp   8) quic  9) grpc 10) http2 11) http3 12) h2"
     echo -e "13) h3   14) ssh  15) sshd 16) dtls  17) icmp  18) pht"
     echo -e "19) ohttp 20) otls 21) ftcp 22) mtcp 23) mtls  24) utls"
-    read -p "Your choice (1-24) [default: 6]: " tchoice
+    echo -e " 0) Back"
+    read -p "Your choice (0-24) [default: 6]: " tchoice
     [ -z "$tchoice" ] && tchoice="6"
+    is_back_choice "$tchoice" && return 1
     case $tchoice in
         1) DIALER_TYPE="tcp"; TRANSPORT_LABEL="TCP" ;;
         2) DIALER_TYPE="tls"; TRANSPORT_LABEL="TLS" ;;
@@ -518,10 +542,13 @@ prompt_optional_chain() {
 add_proxy_service() {
     require_gost || return 1
     echo -e "${CYAN}--- Add Proxy / Handler Service ---${NC}"
+    echo -e "${YELLOW}پروکسی روی همین سرور. برای تانل دو سروره از منوی قبلی گزینه 3 را بزن.${NC}"
+    ask_show_quick_help "proxy"
     echo -e " 1) SOCKS5     2) SOCKS4     3) HTTP       4) HTTP2"
     echo -e " 5) HTTP3      6) Relay      7) Shadowsocks 8) Auto"
     echo -e " 9) SNI       10) SSHD      11) MASQUE    12) Serial"
-    read -p "Your choice (1-12): " pchoice
+    read -p "Your choice (1-12, 0=Back): " pchoice
+    is_back_choice "$pchoice" && return 0
 
     local handler_type port name meta="" ss_method ss_password
     case $pchoice in
@@ -540,7 +567,8 @@ add_proxy_service() {
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
 
-    read -p "Listening port (e.g. 1080 or 443): " port
+    prompt_or_back "Listening port (e.g. 1080 or 443)" || return 0
+    port="$REPLY_VALUE"
     validate_listen_port "$port" || return 1
     select_listener_transport || return 1
 
@@ -605,6 +633,8 @@ add_proxy_service() {
 add_local_port_forward() {
     require_gost || return 1
     echo -e "${CYAN}--- Local Port Forward ---${NC}"
+    echo -e "${YELLOW}مثال: listen :8080 روی همین سرور → 192.168.1.10:80${NC}"
+    ask_show_quick_help "local_fwd"
     local port target proto handler_type listener_type name svc
     echo -e "1) TCP  2) UDP"
     read -p "Choice: " proto
@@ -640,14 +670,18 @@ add_local_port_forward() {
 setup_reverse_tunnel_server() {
     require_gost || return 1
     echo -e "${CYAN}--- Reverse Tunnel SERVER (public) ---${NC}"
+    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
     local tunnel_port entry_port hostname tid name svc
-    read -p "Tunnel listen port (e.g. 8421): " tunnel_port
+    prompt_or_back "Tunnel listen port (e.g. 8421)" || return 0
+    tunnel_port="$REPLY_VALUE"
     validate_listen_port "$tunnel_port" || return 1
-    read -p "Public entrypoint port (e.g. 8420): " entry_port
+    prompt_or_back "Public entrypoint port (e.g. 8420)" || return 0
+    entry_port="$REPLY_VALUE"
     if [[ ! "$entry_port" =~ ^[0-9]+$ ]]; then
         echo -e "${RED}Invalid entry port!${NC}"; return 1
     fi
-    read -p "Ingress hostname (e.g. app.example.com): " hostname
+    prompt_or_back "Ingress hostname (e.g. app.example.com)" || return 0
+    hostname="$REPLY_VALUE"
     [ -z "$hostname" ] && { echo -e "${RED}Hostname required!${NC}"; return 1; }
     tid=$(gen_uuid)
     select_listener_transport || return 1
@@ -678,15 +712,20 @@ setup_reverse_tunnel_server() {
 setup_reverse_tunnel_client() {
     require_gost || return 1
     echo -e "${CYAN}--- Reverse Tunnel CLIENT (behind NAT) ---${NC}"
+    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
     local tid server_addr target proto handler_type name svc chain_name
-    read -p "Tunnel ID (UUID from server): " tid
+    prompt_or_back "Tunnel ID (UUID from server)" || return 0
+    tid="$REPLY_VALUE"
     [ -z "$tid" ] && { echo -e "${RED}Tunnel ID required!${NC}"; return 1; }
-    read -p "Public tunnel server host:port: " server_addr
+    prompt_or_back "Public tunnel server host:port" || return 0
+    server_addr="$REPLY_VALUE"
     [[ ! "$server_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid address!${NC}"; return 1; }
-    read -p "Local target to expose (host:port): " target
+    prompt_or_back "Local target to expose (host:port)" || return 0
+    target="$REPLY_VALUE"
     [[ ! "$target" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid target!${NC}"; return 1; }
-    echo -e "1) rtcp (TCP)  2) rudp (UDP)"
+    echo -e "1) rtcp (TCP)  2) rudp (UDP)  0) Back"
     read -p "Choice: " proto
+    is_back_choice "$proto" && return 0
     case $proto in
         1) handler_type="rtcp" ;;
         2) handler_type="rudp" ;;
@@ -710,15 +749,22 @@ setup_reverse_tunnel_client() {
 }
 
 setup_reverse_tunnel_menu() {
-    echo -e "${CYAN}--- Reverse Proxy / Tunnel ---${NC}"
-    echo -e "1) Server (public / ingress)"
-    echo -e "2) Client (behind NAT / rtcp|rudp)"
-    read -p "Choice: " c
-    case $c in
-        1) setup_reverse_tunnel_server ;;
-        2) setup_reverse_tunnel_client ;;
-        *) echo -e "${RED}Invalid!${NC}" ;;
-    esac
+    while true; do
+        echo -e "\n${CYAN}--- Reverse Proxy / Tunnel ---${NC}"
+        echo -e "${YELLOW}برای سرویس پشت NAT: اول Server (عمومی)، بعد Client (NAT). Tunnel ID را نگه دار.${NC}"
+        echo -e "1) Server (public / ingress)"
+        echo -e "2) Client (behind NAT / rtcp|rudp)"
+        echo -e "3) Show reverse-tunnel help"
+        echo -e "0) Back"
+        read -p "Choice: " c
+        case $c in
+            1) setup_reverse_tunnel_server ;;
+            2) setup_reverse_tunnel_client ;;
+            3) print_guide_reverse; pause_help ;;
+            0|q|Q|b|B) return 0 ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
 }
 
 # ---------- DNS / redirect / tun / file ----------
@@ -843,13 +889,16 @@ select_transport_preset() {
     WS_HOST=""
     TRANSPORT_LABEL="Plain TCP"
     echo -e "\n${CYAN}Select transport layer (anti-DPI):${NC}"
+    echo -e "${YELLOW}اگر گیج شدی: 4 = MWSS را بزن (پیشنهادی). دو سرور باید یکی باشند.${NC}"
     echo -e "1) Plain TCP          ${RED}- high DPI risk${NC}"
     echo -e "2) TLS                ${YELLOW}- encrypted${NC}"
     echo -e "3) WSS                ${YELLOW}- HTTPS WebSocket${NC}"
     echo -e "4) MWSS               ${GREEN}- recommended (mux)${NC}"
     echo -e "5) Full transport list (advanced)"
-    read -p "Choice (1-5) [default: 4]: " c
+    echo -e "0) Back / Cancel"
+    read -p "Choice (0-5) [default: 4]: " c
     [ -z "$c" ] && c="4"
+    is_back_choice "$c" && return 1
     case $c in
         1) LISTENER_TYPE="tcp"; DIALER_TYPE="tcp"; TRANSPORT_LABEL="Plain TCP" ;;
         2) LISTENER_TYPE="tls"; DIALER_TYPE="tls"; TRANSPORT_LABEL="TLS"
@@ -873,11 +922,14 @@ select_transport_preset() {
 setup_remote_port_forward_upstream() {
     require_gost || return 1
     echo -e "${CYAN}--- Server B: Upstream ---${NC}"
+    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
     local port handler_choice handler_type udp_enabled name svc meta=""
-    read -p "Listening port (e.g. 443): " port
+    prompt_or_back "Listening port (e.g. 443)" || return 0
+    port="$REPLY_VALUE"
     validate_listen_port "$port" || return 1
-    echo -e "1) Relay (recommended)  2) SOCKS5  3) HTTP"
+    echo -e "1) Relay (recommended)  2) SOCKS5  3) HTTP  0) Back"
     read -p "Choice: " handler_choice
+    is_back_choice "$handler_choice" && return 0
     case $handler_choice in
         1) handler_type="relay" ;;
         2) handler_type="socks5" ;;
@@ -914,18 +966,22 @@ setup_remote_port_forward_upstream() {
 setup_remote_port_forward_entry() {
     require_gost || return 1
     echo -e "${CYAN}--- Server A: Entry + Remote Forward ---${NC}"
+    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
     local port proto handler_type listener_type connector_type upstream_addr target name chain_name svc ch
-    read -p "Listen port on this server: " port
+    prompt_or_back "Listen port on this server" || return 0
+    port="$REPLY_VALUE"
     validate_listen_port "$port" || return 1
-    echo -e "1) TCP  2) UDP"
+    echo -e "1) TCP  2) UDP  0) Back"
     read -p "Choice: " proto
+    is_back_choice "$proto" && return 0
     case $proto in
         1) handler_type="tcp"; listener_type="tcp" ;;
         2) handler_type="udp"; listener_type="udp" ;;
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
-    echo -e "Upstream connector: 1) relay  2) socks5  3) http"
+    echo -e "Upstream connector: 1) relay  2) socks5  3) http  0) Back"
     read -p "Choice: " c
+    is_back_choice "$c" && return 0
     case $c in
         1) connector_type="relay" ;;
         2) connector_type="socks5" ;;
@@ -933,10 +989,12 @@ setup_remote_port_forward_entry() {
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
     select_transport_preset || return 1
-    read -p "Server B host:port: " upstream_addr
+    prompt_or_back "Server B host:port" || return 0
+    upstream_addr="$REPLY_VALUE"
     [[ ! "$upstream_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid!${NC}"; return 1; }
     prompt_auth || return 1
-    read -p "Target on B network (e.g. 127.0.0.1:80): " target
+    prompt_or_back "Target on B network (e.g. 127.0.0.1:80)" || return 0
+    target="$REPLY_VALUE"
     [[ ! "$target" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid!${NC}"; return 1; }
 
     name="remote-fwd-$port"
@@ -954,15 +1012,23 @@ setup_remote_port_forward_entry() {
 
 setup_remote_port_forward() {
     require_gost || return 1
-    echo -e "${CYAN}--- Remote Port Forward (Two-Server) ---${NC}"
-    echo -e "${YELLOW}Prefer MWSS on port 443. Configure B first, then A.${NC}"
-    echo -e "1) Server A (entry)  2) Server B (upstream)"
-    read -p "Choice: " c
-    case $c in
-        1) setup_remote_port_forward_entry ;;
-        2) setup_remote_port_forward_upstream ;;
-        *) echo -e "${RED}Invalid!${NC}" ;;
-    esac
+    while true; do
+        echo -e "\n${CYAN}--- Remote Port Forward (Two-Server) ---${NC}"
+        echo -e "${GREEN}Client → Server A (listen) → transport → Server B → Target${NC}"
+        echo -e "${YELLOW}ترتیب: اول Server B، بعد Server A. Transport دو طرف یکسان (پیشنهاد: MWSS روی 443).${NC}"
+        echo -e "1) Server A (entry)"
+        echo -e "2) Server B (upstream)"
+        echo -e "3) Show two-server help"
+        echo -e "0) Back"
+        read -p "Choice: " c
+        case $c in
+            1) setup_remote_port_forward_entry ;;
+            2) setup_remote_port_forward_upstream ;;
+            3) print_guide_two_server; pause_help ;;
+            0|q|Q|b|B) return 0 ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
 }
 
 # ---------- policies / api / metrics ----------
@@ -1045,107 +1111,124 @@ manage_limiter() {
 
 enable_api_metrics() {
     require_gost || return 1
-    echo -e "${CYAN}--- API / Metrics / Profiling ---${NC}"
-    echo -e "1) Enable Web API"
-    echo -e "2) Enable Prometheus metrics"
-    echo -e "3) Enable profiling"
-    echo -e "4) Disable API"
-    echo -e "5) Disable metrics"
-    echo -e "6) Disable profiling"
-    read -p "Choice: " c
-    case $c in
-        1)
-            local aport auser apass
-            read -p "API listen port [18080]: " aport
-            [ -z "$aport" ] && aport="18080"
-            read -p "API username (optional): " auser
-            read -p "API password (optional): " apass
-            if [ -n "$auser" ]; then
-                set_config_key "api" "$(jq -n --arg a ":$aport" --arg u "$auser" --arg p "$apass" \
-                    '{addr:$a, pathPrefix:"/api", accesslog:true, auth:{username:$u,password:$p}}')"
-            else
-                set_config_key "api" "$(jq -n --arg a ":$aport" '{addr:$a, pathPrefix:"/api", accesslog:true}')"
-            fi
-            restart_gost
-            echo -e "${GREEN}API enabled on :$aport${NC}"
-            ;;
-        2)
-            local mport
-            read -p "Metrics port [9000]: " mport
-            [ -z "$mport" ] && mport="9000"
-            set_config_key "metrics" "$(jq -n --arg a ":$mport" '{addr:$a, path:"/metrics"}')"
-            restart_gost
-            echo -e "${GREEN}Metrics on :$mport/metrics${NC}"
-            ;;
-        3)
-            local pport
-            read -p "Profiling port [6060]: " pport
-            [ -z "$pport" ] && pport="6060"
-            set_config_key "profiling" "$(jq -n --arg a ":$pport" '{addr:$a}')"
-            restart_gost
-            echo -e "${GREEN}Profiling on :$pport${NC}"
-            ;;
-        4) jq 'del(.api)' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"; restart_gost; echo -e "${GREEN}API disabled.${NC}" ;;
-        5) jq 'del(.metrics)' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"; restart_gost; echo -e "${GREEN}Metrics disabled.${NC}" ;;
-        6) jq 'del(.profiling)' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"; restart_gost; echo -e "${GREEN}Profiling disabled.${NC}" ;;
-        *) echo -e "${RED}Invalid!${NC}" ;;
-    esac
+    while true; do
+        echo -e "\n${CYAN}--- API / Metrics / Profiling ---${NC}"
+        echo -e "1) Enable Web API"
+        echo -e "2) Enable Prometheus metrics"
+        echo -e "3) Enable profiling"
+        echo -e "4) Disable API"
+        echo -e "5) Disable metrics"
+        echo -e "6) Disable profiling"
+        echo -e "0) Back"
+        read -p "Choice: " c
+        case $c in
+            1)
+                local aport auser apass
+                prompt_or_back "API listen port [18080]" || continue
+                aport="$REPLY_VALUE"
+                [ -z "$aport" ] && aport="18080"
+                read -p "API username (optional): " auser
+                read -p "API password (optional): " apass
+                if [ -n "$auser" ]; then
+                    set_config_key "api" "$(jq -n --arg a ":$aport" --arg u "$auser" --arg p "$apass" \
+                        '{addr:$a, pathPrefix:"/api", accesslog:true, auth:{username:$u,password:$p}}')"
+                else
+                    set_config_key "api" "$(jq -n --arg a ":$aport" '{addr:$a, pathPrefix:"/api", accesslog:true}')"
+                fi
+                restart_gost
+                echo -e "${GREEN}API enabled on :$aport${NC}"
+                ;;
+            2)
+                local mport
+                prompt_or_back "Metrics port [9000]" || continue
+                mport="$REPLY_VALUE"
+                [ -z "$mport" ] && mport="9000"
+                set_config_key "metrics" "$(jq -n --arg a ":$mport" '{addr:$a, path:"/metrics"}')"
+                restart_gost
+                echo -e "${GREEN}Metrics on :$mport/metrics${NC}"
+                ;;
+            3)
+                local pport
+                prompt_or_back "Profiling port [6060]" || continue
+                pport="$REPLY_VALUE"
+                [ -z "$pport" ] && pport="6060"
+                set_config_key "profiling" "$(jq -n --arg a ":$pport" '{addr:$a}')"
+                restart_gost
+                echo -e "${GREEN}Profiling on :$pport${NC}"
+                ;;
+            4) jq 'del(.api)' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"; restart_gost; echo -e "${GREEN}API disabled.${NC}" ;;
+            5) jq 'del(.metrics)' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"; restart_gost; echo -e "${GREEN}Metrics disabled.${NC}" ;;
+            6) jq 'del(.profiling)' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"; restart_gost; echo -e "${GREEN}Profiling disabled.${NC}" ;;
+            0|q|Q|b|B) return 0 ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
 }
 
 manage_policies_menu() {
-    echo -e "${CYAN}--- Policies & Controls ---${NC}"
-    echo -e "1) Bypass"
-    echo -e "2) Admission"
-    echo -e "3) Limiter"
-    echo -e "4) API / Metrics / Profiling"
-    echo -e "5) Set log level"
-    read -p "Choice: " c
-    case $c in
-        1) manage_bypass ;;
-        2) manage_admission ;;
-        3) manage_limiter ;;
-        4) enable_api_metrics ;;
-        5)
-            require_gost || return 1
-            echo -e "1) info  2) debug  3) warn  4) error"
-            read -p "Choice: " lc
-            local level="info"
-            case $lc in 1) level="info" ;; 2) level="debug" ;; 3) level="warn" ;; 4) level="error" ;; esac
-            set_config_key "log" "$(jq -n --arg l "$level" '{level:$l}')"
-            restart_gost
-            echo -e "${GREEN}Log level: $level${NC}"
-            ;;
-        *) echo -e "${RED}Invalid!${NC}" ;;
-    esac
+    while true; do
+        echo -e "\n${CYAN}--- Policies & Controls ---${NC}"
+        echo -e "1) Bypass"
+        echo -e "2) Admission"
+        echo -e "3) Limiter"
+        echo -e "4) API / Metrics / Profiling"
+        echo -e "5) Set log level"
+        echo -e "0) Back"
+        read -p "Choice: " c
+        case $c in
+            1) manage_bypass ;;
+            2) manage_admission ;;
+            3) manage_limiter ;;
+            4) enable_api_metrics ;;
+            5)
+                require_gost || continue
+                echo -e "1) info  2) debug  3) warn  4) error  0) Back"
+                read -p "Choice: " lc
+                is_back_choice "$lc" && continue
+                local level="info"
+                case $lc in 1) level="info" ;; 2) level="debug" ;; 3) level="warn" ;; 4) level="error" ;; *) echo -e "${RED}Invalid!${NC}"; continue ;; esac
+                set_config_key "log" "$(jq -n --arg l "$level" '{level:$l}')"
+                restart_gost
+                echo -e "${GREEN}Log level: $level${NC}"
+                ;;
+            0|q|Q|b|B) return 0 ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
 }
 
 # ---------- add service hub ----------
 
 add_service_menu() {
     require_gost || return 1
-    echo -e "${CYAN}--- Add Service / Tunnel ---${NC}"
-    echo -e "1) Proxy server (SOCKS/HTTP/Relay/SS/HTTP2/HTTP3/SNI/SSHD/MASQUE/...)"
-    echo -e "2) Local port forward (TCP/UDP + optional chain)"
-    echo -e "3) Remote port forward (two-server)"
-    echo -e "4) Reverse tunnel (NAT penetration)"
-    echo -e "5) Transparent redirect"
-    echo -e "6) DNS proxy (Do53 / DoT upstream)"
-    echo -e "7) TUN / TAP / TUN2SOCKS"
-    echo -e "8) File server"
-    echo -e "9) Back"
-    read -p "Choice (1-9): " c
-    case $c in
-        1) add_proxy_service ;;
-        2) add_local_port_forward ;;
-        3) setup_remote_port_forward ;;
-        4) setup_reverse_tunnel_menu ;;
-        5) add_transparent_redirect ;;
-        6) add_dns_proxy ;;
-        7) add_tun_service ;;
-        8) add_file_server ;;
-        9) return 0 ;;
-        *) echo -e "${RED}Invalid!${NC}" ;;
-    esac
+    while true; do
+        echo -e "\n${CYAN}--- Add Service / Tunnel ---${NC}"
+        echo -e "${YELLOW}راهنمای سریع:${NC} تانل دو سرور = گزینه 3 | پشت NAT = گزینه 4 | فقط پروکسی = گزینه 1"
+        echo -e "1) Proxy server (SOCKS/HTTP/Relay/SS/HTTP2/HTTP3/SNI/SSHD/MASQUE/...)"
+        echo -e "2) Local port forward (TCP/UDP + optional chain)"
+        echo -e "3) Remote port forward (two-server) ${GREEN}← تانل بین دو سرور${NC}"
+        echo -e "4) Reverse tunnel (NAT penetration)"
+        echo -e "5) Transparent redirect"
+        echo -e "6) DNS proxy (Do53 / DoT upstream)"
+        echo -e "7) TUN / TAP / TUN2SOCKS"
+        echo -e "8) File server"
+        echo -e "9) Show help (which option?)"
+        echo -e "0) Back to main menu"
+        read -p "Choice (0-9): " c
+        case $c in
+            1) add_proxy_service ;;
+            2) add_local_port_forward ;;
+            3) setup_remote_port_forward ;;
+            4) setup_reverse_tunnel_menu ;;
+            5) add_transparent_redirect ;;
+            6) add_dns_proxy ;;
+            7) add_tun_service ;;
+            8) add_file_server ;;
+            9) print_guide_overview; pause_help ;;
+            0|q|Q|b|B) return 0 ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
 }
 
 # ---------- delete / list ----------
@@ -1166,7 +1249,12 @@ delete_tunnel() {
         type=$(jq -r ".services[$i].handler.type" "$CONFIG_FILE")
         echo -e "$((i+1))) $name | $addr | $type"
     done
-    read -p "Number to remove: " choice
+    echo -e "0) Back"
+    read -p "Number to remove (0=Back): " choice
+    if is_back_choice "$choice" || [ -z "$choice" ]; then
+        echo -e "${YELLOW}بازگشت.${NC}"
+        return 0
+    fi
     if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "$services_count" ]; then
         echo -e "${RED}Invalid!${NC}"; return 1
     fi
@@ -1229,15 +1317,154 @@ manage_service() {
     require_gost || return 1
     while true; do
         echo -e "\n${CYAN}--- System Service ---${NC}"
-        echo -e "1) Status  2) Start  3) Stop  4) Restart  5) Logs  6) Back"
+        echo -e "1) Status"
+        echo -e "2) Start"
+        echo -e "3) Stop"
+        echo -e "4) Restart"
+        echo -e "5) Open Logs menu"
+        echo -e "0) Back"
         read -p "Choice: " s_choice
         case $s_choice in
-            1) systemctl status gost ;;
+            1) systemctl status gost --no-pager -l || true ;;
             2) systemctl start gost; echo -e "${GREEN}Started.${NC}" ;;
             3) systemctl stop gost; echo -e "${RED}Stopped.${NC}" ;;
             4) systemctl restart gost; echo -e "${GREEN}Restarted.${NC}" ;;
-            5) echo -e "${CYAN}Ctrl+C to exit logs...${NC}"; journalctl -u gost -n 50 -f ;;
-            6) break ;;
+            5) logs_menu ;;
+            0|q|Q|b|B) break ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
+}
+
+# ---------- logs / diagnostics ----------
+
+logs_menu() {
+    if [ ! -f /usr/local/bin/gost ] && [ ! -f /etc/systemd/system/gost.service ]; then
+        echo -e "${YELLOW}GOST does not appear to be installed, but journal logs may still exist.${NC}"
+    fi
+    while true; do
+        echo -e "\n${CYAN}--- Logs & Diagnostics ---${NC}"
+        echo -e "1) Live logs (follow) — Ctrl+C to stop"
+        echo -e "2) Last 100 lines"
+        echo -e "3) Errors / failures only"
+        echo -e "4) Warnings + errors"
+        echo -e "5) Logs since boot"
+        echo -e "6) Last 1 hour"
+        echo -e "7) Export logs to /tmp/gost-logs.txt"
+        echo -e "8) Validate config JSON"
+        echo -e "9) Service status + recent errors"
+        echo -e "10) Set log level to debug (more detail)"
+        echo -e "11) Set log level to info (normal)"
+        echo -e "12) Troubleshooting tips"
+        echo -e "0) Back"
+        read -p "Choice: " lc
+        case $lc in
+            1)
+                echo -e "${CYAN}Following gost logs (Ctrl+C to return)...${NC}"
+                journalctl -u gost -f --no-pager || true
+                ;;
+            2)
+                echo -e "${CYAN}--- Last 100 lines ---${NC}"
+                journalctl -u gost -n 100 --no-pager || true
+                pause_help
+                ;;
+            3)
+                echo -e "${CYAN}--- Errors / failures ---${NC}"
+                journalctl -u gost -n 300 --no-pager 2>/dev/null \
+                    | grep -iE 'error|fail|fatal|panic|refused|denied|timeout|invalid|cannot|unable' \
+                    || echo -e "${YELLOW}No matching error lines in the last 300 entries.${NC}"
+                pause_help
+                ;;
+            4)
+                echo -e "${CYAN}--- Warnings + errors ---${NC}"
+                journalctl -u gost -n 300 --no-pager -p warning..alert 2>/dev/null \
+                    || journalctl -u gost -n 300 --no-pager 2>/dev/null \
+                    | grep -iE 'warn|error|fail|fatal|panic' \
+                    || echo -e "${YELLOW}No matching lines found.${NC}"
+                pause_help
+                ;;
+            5)
+                echo -e "${CYAN}--- Since boot ---${NC}"
+                journalctl -u gost -b --no-pager || true
+                pause_help
+                ;;
+            6)
+                echo -e "${CYAN}--- Last 1 hour ---${NC}"
+                journalctl -u gost --since "1 hour ago" --no-pager || true
+                pause_help
+                ;;
+            7)
+                local out="/tmp/gost-logs.txt"
+                {
+                    echo "===== Wild GOST diagnostics $(date -Is 2>/dev/null || date) ====="
+                    echo "--- systemctl status ---"
+                    systemctl status gost --no-pager -l 2>&1 || true
+                    echo ""
+                    echo "--- journal (last 500) ---"
+                    journalctl -u gost -n 500 --no-pager 2>&1 || true
+                    echo ""
+                    echo "--- config ---"
+                    if [ -f "$CONFIG_FILE" ]; then
+                        jq . "$CONFIG_FILE" 2>&1 || cat "$CONFIG_FILE"
+                    else
+                        echo "(no config file)"
+                    fi
+                } > "$out"
+                echo -e "${GREEN}Exported to $out${NC}"
+                pause_help
+                ;;
+            8)
+                echo -e "${CYAN}--- Validate config ---${NC}"
+                if [ ! -f "$CONFIG_FILE" ]; then
+                    echo -e "${RED}Config not found: $CONFIG_FILE${NC}"
+                elif ! command -v jq &>/dev/null; then
+                    echo -e "${RED}jq is not installed.${NC}"
+                elif jq empty "$CONFIG_FILE" 2>/tmp/gost_jq_err.txt; then
+                    echo -e "${GREEN}JSON syntax OK.${NC}"
+                    echo -e "Services: $(jq '.services // [] | length' "$CONFIG_FILE")"
+                    echo -e "Chains  : $(jq '.chains // [] | length' "$CONFIG_FILE")"
+                    if command -v gost &>/dev/null || [ -f /usr/local/bin/gost ]; then
+                        echo -e "${CYAN}Trying gost config parse...${NC}"
+                        /usr/local/bin/gost -C "$CONFIG_FILE" -O yaml >/tmp/gost_cfg_check.yaml 2>/tmp/gost_cfg_check.err \
+                            && echo -e "${GREEN}GOST accepted the config (-O yaml OK).${NC}" \
+                            || { echo -e "${RED}GOST rejected or failed to parse config:${NC}"; cat /tmp/gost_cfg_check.err 2>/dev/null; }
+                        rm -f /tmp/gost_cfg_check.yaml /tmp/gost_cfg_check.err
+                    fi
+                else
+                    echo -e "${RED}JSON is invalid:${NC}"
+                    cat /tmp/gost_jq_err.txt 2>/dev/null
+                fi
+                rm -f /tmp/gost_jq_err.txt
+                pause_help
+                ;;
+            9)
+                echo -e "${CYAN}--- Status ---${NC}"
+                systemctl status gost --no-pager -l 2>&1 || true
+                echo -e "\n${CYAN}--- Recent errors ---${NC}"
+                journalctl -u gost -n 80 --no-pager 2>/dev/null \
+                    | grep -iE 'error|fail|fatal|panic|refused|timeout|invalid' \
+                    || echo -e "${YELLOW}No recent error keywords found.${NC}"
+                pause_help
+                ;;
+            10)
+                require_gost || continue
+                set_config_key "log" "$(jq -n '{level:"debug"}')"
+                restart_gost
+                echo -e "${GREEN}Log level set to debug. Reproduce the issue, then use option 1 or 3.${NC}"
+                pause_help
+                ;;
+            11)
+                require_gost || continue
+                set_config_key "log" "$(jq -n '{level:"info"}')"
+                restart_gost
+                echo -e "${GREEN}Log level set to info.${NC}"
+                pause_help
+                ;;
+            12)
+                print_guide_troubleshoot
+                pause_help
+                ;;
+            0|q|Q|b|B) return 0 ;;
             *) echo -e "${RED}Invalid!${NC}" ;;
         esac
     done
@@ -1345,6 +1572,191 @@ show_raw_config() {
     jq . "$CONFIG_FILE" 2>/dev/null || cat "$CONFIG_FILE"
 }
 
+# ---------- help / guides ----------
+
+pause_help() {
+    echo -e "\n${YELLOW}Press Enter to continue...${NC}"
+    read -r
+}
+
+print_guide_overview() {
+    echo -e "${CYAN}========== راهنمای کلی Wild GOST ==========${NC}"
+    echo -e "این پنل فقط کانفیگ JSON برای هسته GOST می‌سازد."
+    echo -e "بعد از نصب، همیشه با دستور ${YELLOW}sudo wild gost${NC} وارد منو شوید."
+    echo -e ""
+    echo -e "${GREEN}کدام گزینه را انتخاب کنم؟${NC}"
+    echo -e "  • فقط پروکسی روی یک سرور (SOCKS/HTTP/SS)     → منو 2 → 1"
+    echo -e "  • فوروارد پورت ساده روی همین سرور              → منو 2 → 2"
+    echo -e "  • تانل بین دو سرور (رایج‌ترین)                 → منو 2 → 3"
+    echo -e "  • سرور پشت NAT / فایروال (Reverse)             → منو 2 → 4"
+    echo -e "  • DNS / Redirect / TUN / File                   → منو 2 → 5~8"
+    echo -e ""
+    echo -e "${GREEN}ترتیب پیشنهادی اولین استفاده:${NC}"
+    echo -e "  1) روی هر دو سرور: منو 1 = Install"
+    echo -e "  2) اول Server B را بساز، بعد Server A"
+    echo -e "  3) برای ضد-DPI: transport را ${YELLOW}MWSS${NC} و ترجیحاً پورت ${YELLOW}443${NC} بگذار"
+    echo -e "  4) وضعیت را با منو 4 و لاگ را با منو 6 ببین"
+}
+
+print_guide_two_server() {
+    echo -e "${CYAN}========== تانل دو سرور (Remote Port Forward) ==========${NC}"
+    echo -e "هدف: کلاینت به Server A وصل می‌شود؛ ترافیک از A به B و بعد به هدف می‌رود."
+    echo -e ""
+    echo -e "${YELLOW}مسیر ترافیک:${NC}"
+    echo -e "  Client  -->  Server A (:listen)  -->  transport  -->  Server B  -->  Target"
+    echo -e " مثال:  Client --> A:8080 --> MWSS --> B:443(relay) --> 127.0.0.1:80"
+    echo -e ""
+    echo -e "${GREEN}گام‌به‌گام:${NC}"
+    echo -e "  ${YELLOW}گام 1 — روی Server B (سرور مقصد / خارج):${NC}"
+    echo -e "    منو → 2 → 3 → گزینه 2 (Server B)"
+    echo -e "    • پورت مثلاً 443"
+    echo -e "    • پروتکل: Relay (پیشنهادی)"
+    echo -e "    • Transport: 4 = MWSS"
+    echo -e "    • در صورت نیاز username/password"
+    echo -e ""
+    echo -e "  ${YELLOW}گام 2 — روی Server A (سرور ورودی):${NC}"
+    echo -e "    منو → 2 → 3 → گزینه 1 (Server A)"
+    echo -e "    • Listen port مثلاً 8080"
+    echo -e "    • TCP یا UDP"
+    echo -e "    • Upstream = همان Relay + همان MWSS"
+    echo -e "    • آدرس B:  IP_B:443"
+    echo -e "    • Target:  127.0.0.1:PORT   (سرویسی که روی B در دسترس است)"
+    echo -e ""
+    echo -e "${GREEN}نکته‌های مهم:${NC}"
+    echo -e "  • Transport دو سرور باید یکی باشد (هر دو MWSS یا هر دو TLS ...)"
+    echo -e "  • WebSocket path دو طرف یکی باشد (پیش‌فرض /ws)"
+    echo -e "  • اول B را بساز، بعد A"
+    echo -e "  • تست: از کلاینت به IP_A:8080 وصل شو؛ باید به Target روی B برسی"
+}
+
+print_guide_reverse() {
+    echo -e "${CYAN}========== Reverse Tunnel (پشت NAT) ==========${NC}"
+    echo -e "وقتی سرویس داخل شبکه خصوصی است و IP عمومی ندارد."
+    echo -e ""
+    echo -e "${YELLOW}مسیر:${NC}"
+    echo -e "  Internet --> Public Server (entrypoint) <-- tunnel -- NAT Client --> Local service"
+    echo -e ""
+    echo -e "${GREEN}گام‌به‌گام:${NC}"
+    echo -e "  ${YELLOW}1) روی سرور عمومی:${NC} منو → 2 → 4 → 1 (Server)"
+    echo -e "     • Tunnel port (مثلاً 8421)"
+    echo -e "     • Entrypoint port (مثلاً 8420) = پورتی که از اینترنت دیده می‌شود"
+    echo -e "     • Hostname برای ingress (مثلاً app.example.com)"
+    echo -e "     • Tunnel ID (UUID) را کپی کن — برای کلاینت لازم است"
+    echo -e ""
+    echo -e "  ${YELLOW}2) روی سرور پشت NAT:${NC} منو → 2 → 4 → 2 (Client)"
+    echo -e "     • همان Tunnel ID"
+    echo -e "     • آدرس سرور عمومی: IP:8421"
+    echo -e "     • Target محلی: 127.0.0.1:80 (سرویسی که می‌خواهی expose کنی)"
+    echo -e "     • rtcp برای TCP / rudp برای UDP"
+    echo -e ""
+    echo -e "  دسترسی از بیرون معمولاً از طریق entrypoint سرور عمومی است."
+}
+
+print_guide_proxy() {
+    echo -e "${CYAN}========== پروکسی تک‌سروره ==========${NC}"
+    echo -e "منو → 2 → 1"
+    echo -e "برای ساخت SOCKS5 / HTTP / Relay / Shadowsocks روی همین ماشین."
+    echo -e ""
+    echo -e "  1) پروتکل را انتخاب کن (مثلاً SOCKS5)"
+    echo -e "  2) پورت listen (مثلاً 1080)"
+    echo -e "  3) Transport listener (معمولاً tcp؛ برای ضد-DPI: tls/wss/mwss)"
+    echo -e "  4) در صورت نیاز auth"
+    echo -e "  5) اگر می‌خواهی ترافیک از پروکسی دیگری رد شود: Attach upstream chain = y"
+    echo -e ""
+    echo -e "کلاینت: socks5://IP:1080 یا http://IP:8080"
+}
+
+print_guide_local_forward() {
+    echo -e "${CYAN}========== Local Port Forward ==========${NC}"
+    echo -e "منو → 2 → 2"
+    echo -e "پورت محلی را به یک آدرس هدف نگاشت می‌کند."
+    echo -e "  مثال: listen :8080 → 192.168.1.10:80"
+    echo -e "اگر chain بسازی، فوروارد از طریق پروکسی واسط انجام می‌شود."
+}
+
+print_guide_transport() {
+    echo -e "${CYAN}========== انتخاب Transport (ضد-DPI) ==========${NC}"
+    echo -e "  ${RED}1 Plain TCP${NC}  — ساده ولی برای DPI راحت‌تر قابل تشخیص"
+    echo -e "  ${YELLOW}2 TLS${NC}       — رمزنگاری، شبیه HTTPS"
+    echo -e "  ${YELLOW}3 WSS${NC}       — WebSocket روی TLS"
+    echo -e "  ${GREEN}4 MWSS${NC}      — پیشنهادی: TLS + WebSocket + multiplex"
+    echo -e "                 چند session روی اتصال کمتر = همبستگی ۱به۱ کمتر"
+    echo -e ""
+    echo -e "پیشنهاد عملی: ${YELLOW}MWSS + پورت 443${NC} روی هر دو سرور."
+    echo -e "path دو طرف باید یکسان باشد (پیش‌فرض ${YELLOW}/ws${NC})."
+}
+
+print_guide_other() {
+    echo -e "${CYAN}========== سایر سرویس‌ها ==========${NC}"
+    echo -e "  ${YELLOW}Transparent redirect${NC}: نیاز به iptables/nftables روی لینوکس دارد."
+    echo -e "  ${YELLOW}DNS proxy${NC}: DNS محلی می‌گیری و به upstream (udp/tls/https) می‌فرستی."
+    echo -e "  ${YELLOW}TUN/TAP${NC}: بعد از ساخت سرویس، IP/route روی اینترفیس را خودت تنظیم کن."
+    echo -e "  ${YELLOW}File server${NC}: پوشه را روی یک پورت سرو می‌کند."
+    echo -e ""
+    echo -e "${CYAN}Policies (منو 5):${NC}"
+    echo -e "  Bypass / Admission / Limiter را بساز، بعد به نام سرویس attach کن."
+    echo -e "  API / Metrics برای مانیتورینگ اختیاری است."
+}
+
+print_guide_troubleshoot() {
+    echo -e "${CYAN}========== عیب‌یابی ==========${NC}"
+    echo -e "  1) منو 4: سرویس ساخته شده؟ Upstream و Target درست است؟"
+    echo -e "  2) منو 6 → Logs: خطای dial/connect/auth را ببین"
+    echo -e "  3) فایروال دو سرور پورت‌ها را باز کرده باشد"
+    echo -e "  4) Transport و path دو سرور یکی باشد"
+    echo -e "  5) روی B اول سرویس upstream بالا باشد، بعد A"
+    echo -e "  6) منو 7: JSON خام را چک کن"
+    echo -e "  7) اگر خراب شد: سرویس را حذف کن (منو 3) و از نو بساز"
+}
+
+help_menu() {
+    while true; do
+        echo -e "\n${CYAN}========== Help / راهنما ==========${NC}"
+        echo -e "1) Overview — از کجا شروع کنم؟"
+        echo -e "2) Two-server tunnel (Remote Port Forward) ${GREEN}← رایج‌ترین${NC}"
+        echo -e "3) Reverse tunnel (پشت NAT)"
+        echo -e "4) Single-server proxy"
+        echo -e "5) Local port forward"
+        echo -e "6) Transport / anti-DPI (TLS/WSS/MWSS)"
+        echo -e "7) Other services + Policies"
+        echo -e "8) Troubleshooting"
+        echo -e "0) Back to main menu"
+        read -p "Choice (0-8): " h
+        case $h in
+            1) print_guide_overview; pause_help ;;
+            2) print_guide_two_server; pause_help ;;
+            3) print_guide_reverse; pause_help ;;
+            4) print_guide_proxy; pause_help ;;
+            5) print_guide_local_forward; pause_help ;;
+            6) print_guide_transport; pause_help ;;
+            7) print_guide_other; pause_help ;;
+            8) print_guide_troubleshoot; pause_help ;;
+            0|q|Q|b|B|9) break ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
+}
+
+# Short tip shown inside wizards (does not block unless user asks)
+ask_show_quick_help() {
+    local topic="$1"
+    local ans
+    read -p "Show short how-to for this section? (y/n) [n]: " ans
+    [ -z "$ans" ] && ans="n"
+    if [ "$ans" != "y" ] && [ "$ans" != "Y" ]; then
+        return 0
+    fi
+    case "$topic" in
+        two_server) print_guide_two_server ;;
+        reverse) print_guide_reverse ;;
+        proxy) print_guide_proxy ;;
+        local_fwd) print_guide_local_forward ;;
+        transport) print_guide_transport ;;
+        *) print_guide_overview ;;
+    esac
+    pause_help
+}
+
 # ---------- main ----------
 
 main_menu() {
@@ -1366,12 +1778,14 @@ main_menu() {
         echo -e "3) Remove a Service"
         echo -e "4) View Services & Config Summary"
         echo -e "5) Policies (Bypass / Admission / Limiter / API / Metrics)"
-        echo -e "6) Manage System Service (Start/Stop/Logs)"
-        echo -e "7) Show Raw Config JSON"
-        echo -e "8) Completely Uninstall GOST"
-        echo -e "9) Exit"
+        echo -e "6) Manage System Service (Start/Stop/Restart)"
+        echo -e "7) Logs & Diagnostics ${GREEN}← خطاها و عیب‌یابی${NC}"
+        echo -e "8) Show Raw Config JSON"
+        echo -e "9) Help / راهنمای تانل و استفاده"
+        echo -e "10) Completely Uninstall GOST"
+        echo -e "0) Exit"
         echo -e "---------------------------------------------"
-        read -p "Enter your choice (1-9): " choice
+        read -p "Enter your choice (0-10): " choice
         case $choice in
             1) install_gost ;;
             2) add_service_menu ;;
@@ -1379,12 +1793,14 @@ main_menu() {
             4) list_tunnels ;;
             5) manage_policies_menu ;;
             6) manage_service ;;
-            7) show_raw_config ;;
-            8) uninstall_gost ;;
-            9) echo -e "${GREEN}Thanks for using Wild GOST. Bye!${NC}"; exit 0 ;;
-            *) echo -e "${RED}Invalid choice! Enter 1-9.${NC}" ;;
+            7) logs_menu ;;
+            8) show_raw_config ;;
+            9) help_menu ;;
+            10) uninstall_gost ;;
+            0|q|Q) echo -e "${GREEN}Thanks for using Wild GOST. Bye!${NC}"; exit 0 ;;
+            *) echo -e "${RED}Invalid choice! Enter 0-10.${NC}" ;;
         esac
-        echo -e "\nPress Enter to return to the menu..."
+        echo -e "\n${YELLOW}Press Enter to return to the main menu (or type 0)...${NC}"
         read -r
         clear
     done
