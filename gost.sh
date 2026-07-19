@@ -357,6 +357,339 @@ add_tunnel() {
     echo -e "${GREEN}Tunnel added and started successfully!${NC}"
 }
 
+validate_listen_port() {
+    local port="$1"
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        echo -e "${RED}Invalid port!${NC}"
+        return 1
+    fi
+    local port_exists
+    port_exists=$(jq --arg port ":$port" '.services[]? | select(.addr == $port) | .name' /etc/gost/config.json)
+    if [ -n "$port_exists" ]; then
+        echo -e "${RED}Port :$port is already used in the configuration!${NC}"
+        return 1
+    fi
+    return 0
+}
+
+build_chain_json() {
+    local chain_name="$1"
+    local connector_type="$2"
+    local node_addr="$3"
+    local username="$4"
+    local password="$5"
+
+    if [ -n "$username" ] && [ -n "$password" ]; then
+        jq -n \
+            --arg name "$chain_name" \
+            --arg addr "$node_addr" \
+            --arg conn "$connector_type" \
+            --arg user "$username" \
+            --arg pass "$password" \
+            '{
+                name: $name,
+                hops: [{
+                    name: "hop-0",
+                    nodes: [{
+                        name: "node-0",
+                        addr: $addr,
+                        connector: {
+                            type: $conn,
+                            auth: {username: $user, password: $pass}
+                        },
+                        dialer: {
+                            type: "tcp",
+                            auth: {username: $user, password: $pass}
+                        }
+                    }]
+                }]
+            }'
+    else
+        jq -n \
+            --arg name "$chain_name" \
+            --arg addr "$node_addr" \
+            --arg conn "$connector_type" \
+            '{
+                name: $name,
+                hops: [{
+                    name: "hop-0",
+                    nodes: [{
+                        name: "node-0",
+                        addr: $addr,
+                        connector: {type: $conn},
+                        dialer: {type: "tcp"}
+                    }]
+                }]
+            }'
+    fi
+}
+
+print_remote_fwd_upstream_instructions() {
+    local port="$1"
+    local handler_type="$2"
+    local username="$3"
+    local password="$4"
+    local udp_enabled="$5"
+
+    echo -e "\n${GREEN}Upstream service configured on this server (Server B).${NC}"
+    echo -e "${CYAN}Next, on Server A run this menu and choose:${NC}"
+    echo -e "  ${YELLOW}7) Setup Remote Port Forward (Two-Server) -> 1) Server A${NC}"
+    echo -e "\n${CYAN}Use these values on Server A:${NC}"
+    echo -e "  Upstream type     : ${YELLOW}$handler_type${NC}"
+    echo -e "  Upstream address  : ${YELLOW}<THIS_SERVER_IP>:$port${NC}"
+    if [ -n "$username" ]; then
+        echo -e "  Upstream username : ${YELLOW}$username${NC}"
+        echo -e "  Upstream password : ${YELLOW}$password${NC}"
+    fi
+    if [ "$udp_enabled" = "y" ] || [ "$udp_enabled" = "Y" ]; then
+        echo -e "  Protocol on A     : ${YELLOW}UDP${NC} (SOCKS5 UDP relay is enabled here)"
+    else
+        echo -e "  Protocol on A     : ${YELLOW}TCP${NC} (or UDP only if upstream supports it)"
+    fi
+    echo -e "  Target address    : ${YELLOW}127.0.0.1:<PORT>${NC} (service reachable from this server)"
+}
+
+print_remote_fwd_entry_instructions() {
+    local listen_port="$1"
+    local handler_type="$2"
+    local proto_label="$3"
+    local upstream_addr="$4"
+    local target_addr="$5"
+    local username="$6"
+    local password="$7"
+
+    echo -e "\n${GREEN}Remote port forward configured on this server (Server A).${NC}"
+    echo -e "${CYAN}Traffic flow:${NC}"
+    echo -e "  Client -> ${YELLOW}:$listen_port${NC} (this server) -> chain -> ${YELLOW}$upstream_addr${NC} -> ${YELLOW}$target_addr${NC}"
+    echo -e "\n${CYAN}Make sure Server B is configured first (menu option 7 -> Server B).${NC}"
+    echo -e "${CYAN}Expected upstream on Server B:${NC}"
+    echo -e "  Type    : ${YELLOW}$handler_type${NC}"
+    echo -e "  Address : ${YELLOW}$upstream_addr${NC}"
+    if [ -n "$username" ]; then
+        echo -e "  Auth    : ${YELLOW}$username / $password${NC}"
+    fi
+    echo -e "  Protocol: ${YELLOW}$proto_label${NC}"
+}
+
+setup_remote_port_forward_upstream() {
+    local port handler_choice handler_type username password has_auth udp_enabled
+    local service_name new_service_json
+
+    echo -e "${CYAN}--- Server B: Upstream Service ---${NC}"
+    echo -e "This server will accept chain connections from Server A."
+
+    read -p "Listening port for upstream (e.g. 8443): " port
+    validate_listen_port "$port" || return 1
+
+    echo -e "Select upstream protocol:"
+    echo -e "1) Relay (recommended)"
+    echo -e "2) SOCKS5"
+    read -p "Your choice (1-2): " handler_choice
+
+    case $handler_choice in
+        1) handler_type="relay" ;;
+        2) handler_type="socks5" ;;
+        *)
+            echo -e "${RED}Invalid choice!${NC}"
+            return 1
+            ;;
+    esac
+
+    read -p "Enable authentication (username/password)? (y/n): " has_auth
+    username=""
+    password=""
+    if [ "$has_auth" = "y" ] || [ "$has_auth" = "Y" ]; then
+        read -p "Username: " username
+        read -p "Password: " password
+        if [ -z "$username" ] || [ -z "$password" ]; then
+            echo -e "${RED}Username and password cannot be empty!${NC}"
+            return 1
+        fi
+    fi
+
+    udp_enabled="n"
+    if [ "$handler_type" = "socks5" ]; then
+        read -p "Enable UDP relay for SOCKS5 (required for UDP port forwarding)? (y/n): " udp_enabled
+    fi
+
+    service_name="upstream-$handler_type-$port"
+
+    if [ "$handler_type" = "relay" ]; then
+        if [ -n "$username" ] && [ -n "$password" ]; then
+            new_service_json=$(jq -n \
+                --arg name "$service_name" \
+                --arg addr ":$port" \
+                --arg user "$username" \
+                --arg pass "$password" \
+                '{name: $name, addr: $addr, handler: {type: "relay", auth: {username: $user, password: $pass}}, listener: {type: "tcp"}}')
+        else
+            new_service_json=$(jq -n \
+                --arg name "$service_name" \
+                --arg addr ":$port" \
+                '{name: $name, addr: $addr, handler: {type: "relay"}, listener: {type: "tcp"}}')
+        fi
+    elif [ -n "$username" ] && [ -n "$password" ]; then
+        if [ "$udp_enabled" = "y" ] || [ "$udp_enabled" = "Y" ]; then
+            new_service_json=$(jq -n \
+                --arg name "$service_name" \
+                --arg addr ":$port" \
+                --arg user "$username" \
+                --arg pass "$password" \
+                '{name: $name, addr: $addr, handler: {type: "socks5", auth: {username: $user, password: $pass}, metadata: {udp: true}}, listener: {type: "tcp"}}')
+        else
+            new_service_json=$(jq -n \
+                --arg name "$service_name" \
+                --arg addr ":$port" \
+                --arg user "$username" \
+                --arg pass "$password" \
+                '{name: $name, addr: $addr, handler: {type: "socks5", auth: {username: $user, password: $pass}}, listener: {type: "tcp"}}')
+        fi
+    elif [ "$udp_enabled" = "y" ] || [ "$udp_enabled" = "Y" ]; then
+        new_service_json=$(jq -n \
+            --arg name "$service_name" \
+            --arg addr ":$port" \
+            '{name: $name, addr: $addr, handler: {type: "socks5", metadata: {udp: true}}, listener: {type: "tcp"}}')
+    else
+        new_service_json=$(jq -n \
+            --arg name "$service_name" \
+            --arg addr ":$port" \
+            '{name: $name, addr: $addr, handler: {type: "socks5"}, listener: {type: "tcp"}}')
+    fi
+
+    jq --argjson new_svc "$new_service_json" '.services += [$new_svc]' /etc/gost/config.json > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json /etc/gost/config.json
+    systemctl restart gost
+
+    print_remote_fwd_upstream_instructions "$port" "$handler_type" "$username" "$password" "$udp_enabled"
+    echo -e "${GREEN}Upstream service started successfully!${NC}"
+}
+
+setup_remote_port_forward_entry() {
+    local port proto_choice handler_type listener_type upstream_choice connector_type
+    local upstream_addr target_addr has_auth username password
+    local service_name chain_name new_service_json new_chain_json
+
+    echo -e "${CYAN}--- Server A: Entry + Remote Forward ---${NC}"
+    echo -e "This server listens on a port and forwards traffic to a target through Server B."
+
+    read -p "Listening port on this server (e.g. 8080): " port
+    validate_listen_port "$port" || return 1
+
+    echo -e "Select forward protocol:"
+    echo -e "1) TCP"
+    echo -e "2) UDP"
+    read -p "Your choice (1-2): " proto_choice
+
+    case $proto_choice in
+        1)
+            handler_type="tcp"
+            listener_type="tcp"
+            ;;
+        2)
+            handler_type="udp"
+            listener_type="udp"
+            echo -e "${YELLOW}Note: UDP forwarding requires Relay or SOCKS5 with UDP enabled on Server B.${NC}"
+            ;;
+        *)
+            echo -e "${RED}Invalid choice!${NC}"
+            return 1
+            ;;
+    esac
+
+    echo -e "Select upstream type on Server B:"
+    echo -e "1) Relay"
+    echo -e "2) SOCKS5"
+    echo -e "3) HTTP"
+    read -p "Your choice (1-3): " upstream_choice
+
+    case $upstream_choice in
+        1) connector_type="relay" ;;
+        2) connector_type="socks5" ;;
+        3) connector_type="http" ;;
+        *)
+            echo -e "${RED}Invalid choice!${NC}"
+            return 1
+            ;;
+    esac
+
+    read -p "Server B address (host:port, e.g. 5.6.7.8:8443): " upstream_addr
+    if [[ ! "$upstream_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]]; then
+        echo -e "${RED}Invalid address! Use host:port format.${NC}"
+        return 1
+    fi
+
+    read -p "Upstream authentication (username/password)? (y/n): " has_auth
+    username=""
+    password=""
+    if [ "$has_auth" = "y" ] || [ "$has_auth" = "Y" ]; then
+        read -p "Username: " username
+        read -p "Password: " password
+        if [ -z "$username" ] || [ -z "$password" ]; then
+            echo -e "${RED}Username and password cannot be empty!${NC}"
+            return 1
+        fi
+    fi
+
+    read -p "Target address on Server B network (e.g. 127.0.0.1:80): " target_addr
+    if [[ ! "$target_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]]; then
+        echo -e "${RED}Invalid target address! Use host:port format.${NC}"
+        return 1
+    fi
+
+    service_name="remote-fwd-$port"
+    chain_name="chain-remote-$port"
+
+    new_service_json=$(jq -n \
+        --arg name "$service_name" \
+        --arg addr ":$port" \
+        --arg handler "$handler_type" \
+        --arg listener "$listener_type" \
+        --arg chain "$chain_name" \
+        --arg port "$port" \
+        --arg target "$target_addr" \
+        '{name: $name, addr: $addr, handler: {type: $handler, chain: $chain}, listener: {type: $listener}, forwarder: {nodes: [{name: ("target-" + $port), addr: $target}]}}')
+
+    new_chain_json=$(build_chain_json "$chain_name" "$connector_type" "$upstream_addr" "$username" "$password")
+
+    jq --argjson new_svc "$new_service_json" '.services += [$new_svc]' /etc/gost/config.json > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json /etc/gost/config.json
+    jq --argjson new_ch "$new_chain_json" '.chains += [$new_ch]' /etc/gost/config.json > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json /etc/gost/config.json
+
+    systemctl restart gost
+
+    local proto_label="TCP"
+    [ "$handler_type" = "udp" ] && proto_label="UDP"
+    print_remote_fwd_entry_instructions "$port" "$connector_type" "$proto_label" "$upstream_addr" "$target_addr" "$username" "$password"
+    echo -e "${GREEN}Remote port forward started successfully!${NC}"
+}
+
+setup_remote_port_forward() {
+    if [ ! -f /usr/local/bin/gost ]; then
+        echo -e "${RED}GOST is not installed. Choose option 1 to install it first.${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}--- Remote Port Forward (Two-Server) ---${NC}"
+    echo -e "Uses native GOST port forwarding with a forwarding chain."
+    echo -e "Flow: Client -> Server A (listen) -> chain -> Server B -> Target"
+    echo -e "\n${YELLOW}Configure Server B first, then Server A.${NC}"
+    echo -e "\nWhich server is this machine?"
+    echo -e "1) Server A - Entry (listen + forward through chain)"
+    echo -e "2) Server B - Upstream (relay/socks5 for the chain)"
+    read -p "Your choice (1-2): " role_choice
+
+    case $role_choice in
+        1)
+            setup_remote_port_forward_entry
+            ;;
+        2)
+            setup_remote_port_forward_upstream
+            ;;
+        *)
+            echo -e "${RED}Invalid choice!${NC}"
+            return 1
+            ;;
+    esac
+}
+
 delete_tunnel() {
     if [ ! -f /usr/local/bin/gost ]; then
         echo -e "${RED}GOST is not installed.${NC}"
@@ -411,21 +744,23 @@ list_tunnels() {
         return 0
     fi
 
-    echo -e "-------------------------------------------------------------------------------"
-    printf "%-5s | %-20s | %-12s | %-12s | %-20s\n" "No." "Service Name" "Listen Port" "Protocol" "Upstream Proxy"
-    echo -e "-------------------------------------------------------------------------------"
+    echo -e "---------------------------------------------------------------------------------------------"
+    printf "%-5s | %-18s | %-10s | %-8s | %-18s | %-18s\n" "No." "Service Name" "Listen" "Protocol" "Upstream" "Forward Target"
+    echo -e "---------------------------------------------------------------------------------------------"
     for ((i=0; i<services_count; i++)); do
         name=$(jq -r ".services[$i].name" /etc/gost/config.json)
         addr=$(jq -r ".services[$i].addr" /etc/gost/config.json)
         type=$(jq -r ".services[$i].handler.type" /etc/gost/config.json)
-        chain=$(jq -r ".services[$i].handler.chain // \"none\"" /etc/gost/config.json)
-        if [ "$chain" != "none" ]; then
-            chain_addr=$(jq -r --arg ch "$chain" '.chains[]? | select(.name == $ch) | .hops[0].nodes[0].addr' /etc/gost/config.json)
-            chain="$chain_addr"
+        chain=$(jq -r ".services[$i].handler.chain // empty" /etc/gost/config.json)
+        forward_target=$(jq -r ".services[$i].forwarder.nodes[0].addr // \"-\"" /etc/gost/config.json)
+        upstream="-"
+        if [ -n "$chain" ]; then
+            upstream=$(jq -r --arg ch "$chain" '.chains[]? | select(.name == $ch) | .hops[0].nodes[0].addr' /etc/gost/config.json)
+            [ -z "$upstream" ] || [ "$upstream" = "null" ] && upstream="$chain"
         fi
-        printf "%-5s | %-20s | %-12s | %-12s | %-20s\n" "$((i+1))" "$name" "$addr" "$type" "$chain"
+        printf "%-5s | %-18s | %-10s | %-8s | %-18s | %-18s\n" "$((i+1))" "$name" "$addr" "$type" "$upstream" "$forward_target"
     done
-    echo -e "-------------------------------------------------------------------------------"
+    echo -e "---------------------------------------------------------------------------------------------"
 }
 
 manage_service() {
@@ -533,9 +868,10 @@ main_menu() {
         echo -e "4) View Active Tunnels List"
         echo -e "5) Manage System Service (Start / Stop / Restart / Logs)"
         echo -e "6) Completely Uninstall GOST"
-        echo -e "7) Exit"
+        echo -e "7) Setup Remote Port Forward (Two-Server)"
+        echo -e "8) Exit"
         echo -e "---------------------------------------------"
-        read -p "Enter your choice (1-7): " choice
+        read -p "Enter your choice (1-8): " choice
 
         case $choice in
             1)
@@ -557,11 +893,14 @@ main_menu() {
                 uninstall_gost
                 ;;
             7)
+                setup_remote_port_forward
+                ;;
+            8)
                 echo -e "${GREEN}Thanks for using Wild GOST. Bye!${NC}"
                 exit 0
                 ;;
             *)
-                echo -e "${RED}Invalid choice! Please enter a number between 1 and 7.${NC}"
+                echo -e "${RED}Invalid choice! Please enter a number between 1 and 8.${NC}"
                 ;;
         esac
         echo -e "\nPress Enter to return to the menu..."
