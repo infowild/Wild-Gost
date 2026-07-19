@@ -51,3 +51,7 @@ __pycache__/
 
 # Claude session config
 .claude/
+
+# Rules and progress file
+rules_and_progress.md
+
