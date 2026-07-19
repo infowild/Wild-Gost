@@ -251,6 +251,68 @@ validate_listen_port() {
     return 0
 }
 
+# Sanitize a display name into a GOST-safe id (letters/digits/._-).
+sanitize_name() {
+    local raw="$1"
+    local out
+    out=$(echo "$raw" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+    [ -z "$out" ] && out="cfg"
+    echo "$out"
+}
+
+prompt_config_name() {
+    # Sets REPLY_VALUE to sanitized name. Arg1=prompt label, Arg2=optional default raw name.
+    local label="${1:-Config name}"
+    local def_raw="${2:-}"
+    local raw slug
+    if [ -n "$def_raw" ]; then
+        prompt_or_back "$label [$def_raw]" || return 1
+        raw="$REPLY_VALUE"
+        [ -z "$raw" ] && raw="$def_raw"
+    else
+        prompt_or_back "$label (required, e.g. sanaei-home)" || return 1
+        raw="$REPLY_VALUE"
+    fi
+    if [ -z "$raw" ]; then
+        echo -e "${RED}Name cannot be empty!${NC}"
+        return 1
+    fi
+    slug=$(sanitize_name "$raw")
+    REPLY_VALUE="$slug"
+    echo -e "${CYAN}Using id: ${YELLOW}$slug${NC}"
+    return 0
+}
+
+build_chain_multi_nodes() {
+    # $1 chain name, $2 nodes JSON array, $3 optional strategy (round|rand|fifo|hash)
+    local chain_name="$1"
+    local nodes_json="$2"
+    local strategy="${3:-}"
+    if [ -n "$strategy" ]; then
+        jq -n --arg name "$chain_name" --argjson nodes "$nodes_json" --arg st "$strategy" \
+            '{name: $name, hops: [{name: "hop-0", nodes: $nodes}], selector: {strategy: $st, maxFails: 1, failTimeout: "30s"}}'
+    else
+        jq -n --arg name "$chain_name" --argjson nodes "$nodes_json" \
+            '{name: $name, hops: [{name: "hop-0", nodes: $nodes}]}'
+    fi
+}
+
+build_chain_node_json() {
+    # Build one hop node object. Args: node_name addr connector user pass dialer path host
+    local node_name="$1" node_addr="$2" connector_type="$3" username="$4" password="$5"
+    local dialer_type="${6:-tcp}" ws_path="${7:-}" ws_host="${8:-}"
+    local dialer_json connector_json
+    dialer_json=$(build_dialer_json "$dialer_type" "$ws_path" "$ws_host")
+    if [ -n "$username" ] && [ -n "$password" ]; then
+        connector_json=$(jq -n --arg t "$connector_type" --arg u "$username" --arg p "$password" \
+            '{type: $t, auth: {username: $u, password: $p}}')
+    else
+        connector_json=$(jq -n --arg t "$connector_type" '{type: $t}')
+    fi
+    jq -n --arg n "$node_name" --arg a "$node_addr" --argjson c "$connector_json" --argjson d "$dialer_json" \
+        '{name: $n, addr: $a, connector: $c, dialer: $d}'
+}
+
 prompt_auth() {
     USERNAME=""
     PASSWORD=""
@@ -921,9 +983,11 @@ select_transport_preset() {
 
 setup_remote_port_forward_upstream() {
     require_gost || return 1
-    echo -e "${CYAN}--- Server B: Upstream ---${NC}"
+    echo -e "${CYAN}--- Server B: Upstream (one location) ---${NC}"
     echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
-    local port handler_choice handler_type udp_enabled name svc meta=""
+    local port handler_choice handler_type udp_enabled name svc meta="" loc_label
+    prompt_config_name "Config / location name" "upstream" || return 0
+    name="$REPLY_VALUE"
     prompt_or_back "Listening port (e.g. 443)" || return 0
     port="$REPLY_VALUE"
     validate_listen_port "$port" || return 1
@@ -952,22 +1016,28 @@ setup_remote_port_forward_upstream() {
             if [ -n "$meta" ]; then meta=$(echo "$meta" | jq '. + {bind: true}'); else meta='{"bind":true}'; fi
         fi
     fi
-    name="upstream-$handler_type-$LISTENER_TYPE-$port"
+    # Keep human-readable uniqueness: name-handler-transport-port if name was generic
+    loc_label="$name"
+    name="${loc_label}-${handler_type}-${LISTENER_TYPE}-${port}"
     local handler_json listener_json
     handler_json=$(build_handler_json "$handler_type" "$USERNAME" "$PASSWORD" "$meta")
     listener_json=$(build_listener_json "$LISTENER_TYPE" "$WS_PATH")
     svc=$(jq -n --arg n "$name" --arg a ":$port" --argjson h "$handler_json" --argjson l "$listener_json" \
-        '{name:$n,addr:$a,handler:$h,listener:$l}')
+        --arg loc "$loc_label" \
+        '{name:$n,addr:$a,handler:$h,listener:$l,metadata:{wildName:$loc,role:"upstream"}}')
     append_service "$svc"
     restart_gost
-    echo -e "${GREEN}Upstream ready. On Server A use same transport ($TRANSPORT_LABEL) and <IP>:$port${NC}"
+    echo -e "${GREEN}Upstream '$loc_label' ready on :$port ($TRANSPORT_LABEL).${NC}"
+    echo -e "${YELLOW}On Server A use same transport and this host:port.${NC}"
 }
 
 setup_remote_port_forward_entry() {
     require_gost || return 1
-    echo -e "${CYAN}--- Server A: Entry + Remote Forward ---${NC}"
+    echo -e "${CYAN}--- Server A: Entry + Remote Forward (single) ---${NC}"
     echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
     local port proto handler_type listener_type connector_type upstream_addr target name chain_name svc ch
+    prompt_config_name "Config name" "remote-fwd" || return 0
+    name="$REPLY_VALUE"
     prompt_or_back "Listen port on this server" || return 0
     port="$REPLY_VALUE"
     validate_listen_port "$port" || return 1
@@ -993,21 +1063,239 @@ setup_remote_port_forward_entry() {
     upstream_addr="$REPLY_VALUE"
     [[ ! "$upstream_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid!${NC}"; return 1; }
     prompt_auth || return 1
-    prompt_or_back "Target on B network (e.g. 127.0.0.1:80)" || return 0
+    prompt_or_back "Target on B network (e.g. 127.0.0.1:8080)" || return 0
     target="$REPLY_VALUE"
     [[ ! "$target" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid!${NC}"; return 1; }
 
-    name="remote-fwd-$port"
-    chain_name="chain-remote-$port"
-    svc=$(jq -n --arg n "$name" --arg a ":$port" --arg h "$handler_type" --arg l "$listener_type" \
-        --arg c "$chain_name" --arg t "$target" --arg p "$port" \
-        '{name:$n,addr:$a,handler:{type:$h,chain:$c},listener:{type:$l},forwarder:{nodes:[{name:("target-"+$p),addr:$t}]}}')
+    chain_name="chain-${name}-${port}"
+    local svc_name="${name}-p${port}"
+    svc=$(jq -n --arg n "$svc_name" --arg a ":$port" --arg h "$handler_type" --arg l "$listener_type" \
+        --arg c "$chain_name" --arg t "$target" --arg p "$port" --arg gn "$name" \
+        '{name:$n,addr:$a,handler:{type:$h,chain:$c},listener:{type:$l},forwarder:{nodes:[{name:("target-"+$p),addr:$t}]},metadata:{wildName:$gn,role:"entry"}}')
     ch=$(build_chain_json "$chain_name" "$connector_type" "$upstream_addr" "$USERNAME" "$PASSWORD" \
         "$DIALER_TYPE" "$WS_PATH" "$WS_HOST")
     append_service "$svc"
     append_chain "$ch"
     restart_gost
-    echo -e "${GREEN}Remote forward :$port -> $upstream_addr -> $target ($TRANSPORT_LABEL)${NC}"
+    echo -e "${GREEN}[$name] :$port -> $upstream_addr -> $target ($TRANSPORT_LABEL)${NC}"
+}
+
+setup_multi_port_location_entry() {
+    require_gost || return 1
+    echo -e "${CYAN}--- Server A: Multi-Port + Multi-Location ---${NC}"
+    echo -e "${YELLOW}Create several listen ports and/or several exit locations under one config name.${NC}"
+    echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
+
+    local group slug connector_type proto handler_type listener_type mode strategy offset
+    local ports_raw targets_mode loc_count i loc_name loc_addr listen_port target_addr
+    local nodes_json node_json chain_name svc_name svc ch created=0
+    local locs_tmp ports_tmp
+
+    prompt_config_name "Config group name (required)" || return 0
+    group="$REPLY_VALUE"
+    slug="$group"
+
+    echo -e "Forward protocol: 1) TCP  2) UDP  0) Back"
+    read -p "Choice [1]: " proto
+    [ -z "$proto" ] && proto="1"
+    is_back_choice "$proto" && return 0
+    case $proto in
+        1) handler_type="tcp"; listener_type="tcp" ;;
+        2) handler_type="udp"; listener_type="udp" ;;
+        *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
+    esac
+
+    echo -e "Upstream connector: 1) relay  2) socks5  3) http  0) Back"
+    read -p "Choice [1]: " c
+    [ -z "$c" ] && c="1"
+    is_back_choice "$c" && return 0
+    case $c in
+        1) connector_type="relay" ;;
+        2) connector_type="socks5" ;;
+        3) connector_type="http" ;;
+        *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
+    esac
+
+    echo -e "${CYAN}Transport must match every Server B location.${NC}"
+    select_transport_preset || return 1
+
+    locs_tmp=$(mktemp)
+    echo '[]' > "$locs_tmp"
+    echo -e "\n${CYAN}Add exit locations (Server B). At least one required.${NC}"
+    loc_count=0
+    while true; do
+        echo -e "\n${YELLOW}Location #$((loc_count+1))${NC}"
+        prompt_or_back "Location name (e.g. US / DE / TR)" || { rm -f "$locs_tmp"; return 0; }
+        loc_name=$(sanitize_name "$REPLY_VALUE")
+        prompt_or_back "Upstream host:port for this location" || { rm -f "$locs_tmp"; return 0; }
+        loc_addr="$REPLY_VALUE"
+        if [[ ! "$loc_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]]; then
+            echo -e "${RED}Invalid address! Use host:port${NC}"
+            continue
+        fi
+        prompt_auth || { rm -f "$locs_tmp"; return 1; }
+        node_json=$(build_chain_node_json "node-$loc_name" "$loc_addr" "$connector_type" \
+            "$USERNAME" "$PASSWORD" "$DIALER_TYPE" "$WS_PATH" "$WS_HOST")
+        jq --argjson n "$node_json" --arg ln "$loc_name" --arg la "$loc_addr" \
+            '. + [{loc: $ln, addr: $la, node: $n}]' "$locs_tmp" > "${locs_tmp}.n" && mv "${locs_tmp}.n" "$locs_tmp"
+        loc_count=$((loc_count+1))
+        echo -e "${GREEN}Added location: $loc_name ($loc_addr)${NC}"
+        read -p "Add another location? (y/n) [n]: " more
+        [ "$more" = "y" ] || [ "$more" = "Y" ] || break
+    done
+    if [ "$loc_count" -lt 1 ]; then
+        echo -e "${RED}Need at least one location.${NC}"
+        rm -f "$locs_tmp"
+        return 1
+    fi
+
+    prompt_or_back "Ports list (comma-separated, e.g. 8080,8443,2096)" || { rm -f "$locs_tmp"; return 0; }
+    ports_raw="$REPLY_VALUE"
+    ports_tmp=$(mktemp)
+    echo "$ports_raw" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -E '^[0-9]+$' > "$ports_tmp" || true
+    if [ ! -s "$ports_tmp" ]; then
+        echo -e "${RED}No valid ports.${NC}"
+        rm -f "$locs_tmp" "$ports_tmp"
+        return 1
+    fi
+
+    echo -e "Target on each B location:"
+    echo -e "1) Same port on B loopback (127.0.0.1:PORT) ${GREEN}[default]${NC}"
+    echo -e "2) Custom single target for ALL ports (e.g. 127.0.0.1:8080)"
+    read -p "Choice [1]: " targets_mode
+    [ -z "$targets_mode" ] && targets_mode="1"
+    local custom_target=""
+    if [ "$targets_mode" = "2" ]; then
+        prompt_or_back "Custom target host:port" || { rm -f "$locs_tmp" "$ports_tmp"; return 0; }
+        custom_target="$REPLY_VALUE"
+        [[ ! "$custom_target" =~ ^[^[:space:]:]+:[0-9]+$ ]] && {
+            echo -e "${RED}Invalid target!${NC}"
+            rm -f "$locs_tmp" "$ports_tmp"
+            return 1
+        }
+    fi
+
+    echo -e "\n${CYAN}How should locations be used?${NC}"
+    echo -e "1) Separate listen port per location ${GREEN}(recommended for Sanaei clients)${NC}"
+    echo -e "   listen = PORT + (location_index * offset)"
+    echo -e "2) Shared ports with selector (failover / load-balance)"
+    read -p "Choice [1]: " mode
+    [ -z "$mode" ] && mode="1"
+    strategy=""
+    offset=10000
+    if [ "$mode" = "1" ]; then
+        read -p "Port offset between locations [10000]: " offset
+        [ -z "$offset" ] && offset=10000
+        if [[ ! "$offset" =~ ^[0-9]+$ ]] || [ "$offset" -lt 1 ]; then
+            echo -e "${RED}Invalid offset!${NC}"
+            rm -f "$locs_tmp" "$ports_tmp"
+            return 1
+        fi
+    else
+        echo -e "Selector: 1) fifo (failover)  2) round  3) rand"
+        read -p "Choice [1]: " sc
+        [ -z "$sc" ] && sc="1"
+        case $sc in
+            1) strategy="fifo" ;;
+            2) strategy="round" ;;
+            3) strategy="rand" ;;
+            *) strategy="fifo" ;;
+        esac
+    fi
+
+    # Pre-validate listen ports
+    local base_port loc_idx listen_list=""
+    while read -r base_port; do
+        [ -z "$base_port" ] && continue
+        if [ "$mode" = "1" ]; then
+            for ((loc_idx=0; loc_idx<loc_count; loc_idx++)); do
+                listen_port=$((base_port + loc_idx * offset))
+                if [ "$listen_port" -gt 65535 ]; then
+                    echo -e "${RED}Port $listen_port exceeds 65535 (base=$base_port loc=$loc_idx offset=$offset)${NC}"
+                    rm -f "$locs_tmp" "$ports_tmp"
+                    return 1
+                fi
+                validate_listen_port "$listen_port" || { rm -f "$locs_tmp" "$ports_tmp"; return 1; }
+                # also reserve against duplicates in this batch
+                echo " $listen_list " | grep -q " $listen_port " && {
+                    echo -e "${RED}Duplicate listen port $listen_port in this batch.${NC}"
+                    rm -f "$locs_tmp" "$ports_tmp"
+                    return 1
+                }
+                listen_list="$listen_list $listen_port"
+            done
+        else
+            validate_listen_port "$base_port" || { rm -f "$locs_tmp" "$ports_tmp"; return 1; }
+            echo " $listen_list " | grep -q " $base_port " && {
+                echo -e "${RED}Duplicate listen port $base_port.${NC}"
+                rm -f "$locs_tmp" "$ports_tmp"
+                return 1
+            }
+            listen_list="$listen_list $base_port"
+        fi
+    done < "$ports_tmp"
+
+    echo -e "\n${CYAN}Creating services for group '$group'...${NC}"
+
+    if [ "$mode" = "2" ]; then
+        nodes_json=$(jq '[.[].node]' "$locs_tmp")
+        chain_name="chain-${slug}-multi"
+        ch=$(build_chain_multi_nodes "$chain_name" "$nodes_json" "$strategy")
+        append_chain "$ch"
+        while read -r base_port; do
+            [ -z "$base_port" ] && continue
+            if [ -n "$custom_target" ]; then
+                target_addr="$custom_target"
+            else
+                target_addr="127.0.0.1:$base_port"
+            fi
+            svc_name="${slug}-p${base_port}"
+            svc=$(jq -n --arg n "$svc_name" --arg a ":$base_port" --arg h "$handler_type" --arg l "$listener_type" \
+                --arg c "$chain_name" --arg t "$target_addr" --arg p "$base_port" --arg gn "$group" --arg st "$strategy" \
+                '{name:$n,addr:$a,handler:{type:$h,chain:$c},listener:{type:$l},forwarder:{nodes:[{name:("target-"+$p),addr:$t}]},metadata:{wildName:$gn,role:"entry-multi",mode:"selector",strategy:$st}}')
+            append_service "$svc"
+            created=$((created+1))
+            echo -e "  ${GREEN}+${NC} $svc_name  :$base_port -> [$loc_count locations/$strategy] -> $target_addr"
+        done < "$ports_tmp"
+    else
+        # Mode A: one chain per location, listen ports offset per location
+        for ((loc_idx=0; loc_idx<loc_count; loc_idx++)); do
+            loc_name=$(jq -r --argjson i "$loc_idx" '.[$i].loc' "$locs_tmp")
+            loc_addr=$(jq -r --argjson i "$loc_idx" '.[$i].addr' "$locs_tmp")
+            node_json=$(jq -c --argjson i "$loc_idx" '.[$i].node' "$locs_tmp")
+            chain_name="chain-${slug}-${loc_name}"
+            nodes_json=$(jq -n --argjson n "$node_json" '[$n]')
+            ch=$(build_chain_multi_nodes "$chain_name" "$nodes_json" "")
+            append_chain "$ch"
+            while read -r base_port; do
+                [ -z "$base_port" ] && continue
+                listen_port=$((base_port + loc_idx * offset))
+                if [ -n "$custom_target" ]; then
+                    target_addr="$custom_target"
+                else
+                    target_addr="127.0.0.1:$base_port"
+                fi
+                svc_name="${slug}-${loc_name}-p${listen_port}"
+                svc=$(jq -n --arg n "$svc_name" --arg a ":$listen_port" --arg h "$handler_type" --arg l "$listener_type" \
+                    --arg c "$chain_name" --arg t "$target_addr" --arg p "$listen_port" \
+                    --arg gn "$group" --arg ln "$loc_name" --arg la "$loc_addr" --arg bp "$base_port" \
+                    '{name:$n,addr:$a,handler:{type:$h,chain:$c},listener:{type:$l},forwarder:{nodes:[{name:("target-"+$p),addr:$t}]},metadata:{wildName:$gn,role:"entry-multi",mode:"per-location",location:$ln,upstream:$la,basePort:($bp|tonumber)}}')
+                append_service "$svc"
+                created=$((created+1))
+                echo -e "  ${GREEN}+${NC} $svc_name  :$listen_port ($loc_name -> $loc_addr) -> $target_addr"
+            done < "$ports_tmp"
+        done
+    fi
+
+    rm -f "$locs_tmp" "$ports_tmp"
+    restart_gost
+    echo -e "\n${GREEN}Created $created service(s) under config '$group' ($TRANSPORT_LABEL).${NC}"
+    if [ "$mode" = "1" ]; then
+        echo -e "${YELLOW}Client tip:${NC} location index 0 uses base ports; next location uses base+${offset}, etc."
+        echo -e "Example: base 8080, offset 10000 → US=:8080  DE=:18080  TR=:28080"
+    else
+        echo -e "${YELLOW}Client tip:${NC} connect to base ports; GOST picks location via ${strategy}."
+    fi
 }
 
 setup_remote_port_forward() {
@@ -1015,16 +1303,18 @@ setup_remote_port_forward() {
     while true; do
         echo -e "\n${CYAN}--- Remote Port Forward (Two-Server) ---${NC}"
         echo -e "${GREEN}Client → Server A (listen) → transport → Server B → Target${NC}"
-        echo -e "${YELLOW}Order: configure Server B first, then Server A. Same transport on both (recommended: MWSS on 443).${NC}"
-        echo -e "1) Server A (entry)"
-        echo -e "2) Server B (upstream)"
-        echo -e "3) Show two-server help"
+        echo -e "${YELLOW}Order: configure each Server B first, then Server A. Same transport on all (recommended: MWSS on 443).${NC}"
+        echo -e "1) Server A — single port / single location"
+        echo -e "2) Server B — upstream (one location)"
+        echo -e "3) Server A — ${GREEN}Multi-Port + Multi-Location${NC} (named config)"
+        echo -e "4) Show two-server / multi help"
         echo -e "0) Back"
         read -p "Choice: " c
         case $c in
             1) setup_remote_port_forward_entry ;;
             2) setup_remote_port_forward_upstream ;;
-            3) print_guide_two_server; pause_help ;;
+            3) setup_multi_port_location_entry ;;
+            4) print_guide_two_server; echo ""; print_guide_multi; pause_help ;;
             0|q|Q|b|B) return 0 ;;
             *) echo -e "${RED}Invalid!${NC}" ;;
         esac
@@ -1203,10 +1493,10 @@ add_service_menu() {
     require_gost || return 1
     while true; do
         echo -e "\n${CYAN}--- Add Service / Tunnel ---${NC}"
-        echo -e "${YELLOW}Quick tip:${NC} two-server tunnel = 3 | behind NAT = 4 | single proxy = 1"
+        echo -e "${YELLOW}Quick tip:${NC} two-server = 3 | multi-port/location = 3→3 | behind NAT = 4 | proxy = 1"
         echo -e "1) Proxy server (SOCKS/HTTP/Relay/SS/HTTP2/HTTP3/SNI/SSHD/MASQUE/...)"
         echo -e "2) Local port forward (TCP/UDP + optional chain)"
-        echo -e "3) Remote port forward (two-server) ${GREEN}<- most common tunnel${NC}"
+        echo -e "3) Remote port forward (two-server / ${GREEN}multi-port + multi-location${NC})"
         echo -e "4) Reverse tunnel (NAT penetration)"
         echo -e "5) Transparent redirect"
         echo -e "6) DNS proxy (Do53 / DoT upstream)"
@@ -1994,7 +2284,7 @@ list_tunnels() {
     else
         printf "%-4s %-22s %-10s %-10s %-8s %-18s %-16s\n" "No." "Name" "Listen" "Handler" "Transport" "Upstream" "Target"
         echo "--------------------------------------------------------------------------------------------------------"
-        local i name addr type chain forward_target listener_type upstream transport dialer_type
+        local i name addr type chain forward_target listener_type upstream transport dialer_type node_n
         for ((i=0; i<services_count; i++)); do
             name=$(jq -r ".services[$i].name" "$CONFIG_FILE")
             addr=$(jq -r ".services[$i].addr" "$CONFIG_FILE")
@@ -2002,9 +2292,17 @@ list_tunnels() {
             chain=$(jq -r ".services[$i].handler.chain // .services[$i].listener.chain // empty" "$CONFIG_FILE")
             forward_target=$(jq -r ".services[$i].forwarder.nodes[0].addr // \"-\"" "$CONFIG_FILE")
             listener_type=$(jq -r ".services[$i].listener.type // \"-\"" "$CONFIG_FILE")
-            upstream="-"; transport="$listener_type"
+            upstream="-"; transport="$listener_type"; node_n=0
             if [ -n "$chain" ]; then
-                upstream=$(jq -r --arg ch "$chain" '.chains[]? | select(.name==$ch) | .hops[0].nodes[0].addr' "$CONFIG_FILE")
+                node_n=$(jq -r --arg ch "$chain" '.chains[]? | select(.name==$ch) | (.hops[0].nodes // []) | length' "$CONFIG_FILE")
+                if [ "$node_n" -gt 1 ] 2>/dev/null; then
+                    upstream=$(jq -r --arg ch "$chain" '
+                        .chains[]? | select(.name==$ch) |
+                        ((.hops[0].nodes | map(.addr) | join(",")) + " (" + ((.selector.strategy // "multi")|tostring) + ")")
+                    ' "$CONFIG_FILE")
+                else
+                    upstream=$(jq -r --arg ch "$chain" '.chains[]? | select(.name==$ch) | .hops[0].nodes[0].addr' "$CONFIG_FILE")
+                fi
                 [ -z "$upstream" ] || [ "$upstream" = "null" ] && upstream="$chain"
                 dialer_type=$(jq -r --arg ch "$chain" '.chains[]? | select(.name==$ch) | .hops[0].nodes[0].dialer.type // empty' "$CONFIG_FILE")
                 [ -n "$dialer_type" ] && [ "$dialer_type" != "null" ] && transport="$dialer_type"
@@ -2316,29 +2614,46 @@ print_guide_two_server() {
     echo -e ""
     echo -e "${YELLOW}Traffic path:${NC}"
     echo -e "  Client  -->  Server A (:listen)  -->  transport  -->  Server B  -->  Target"
-    echo -e "  Example: Client --> A:8080 --> MWSS --> B:443(relay) --> 127.0.0.1:80"
+    echo -e "  Example: Client --> A:8080 --> MWSS --> B:443(relay) --> 127.0.0.1:8080"
     echo -e ""
     echo -e "${GREEN}Step by step:${NC}"
     echo -e "  ${YELLOW}Step 1 - On Server B (destination / exit):${NC}"
     echo -e "    Menu -> 2 -> 3 -> option 2 (Server B)"
+    echo -e "    - Give it a name (e.g. US / DE)"
     echo -e "    - Port e.g. 443"
     echo -e "    - Protocol: Relay (recommended)"
     echo -e "    - Transport: 4 = MWSS"
     echo -e "    - Optional username/password"
     echo -e ""
     echo -e "  ${YELLOW}Step 2 - On Server A (entry):${NC}"
-    echo -e "    Menu -> 2 -> 3 -> option 1 (Server A)"
-    echo -e "    - Listen port e.g. 8080"
-    echo -e "    - TCP or UDP"
-    echo -e "    - Upstream = same Relay + same MWSS"
-    echo -e "    - B address: IP_B:443"
-    echo -e "    - Target: 127.0.0.1:PORT (service reachable from B)"
+    echo -e "    Single: Menu -> 2 -> 3 -> 1"
+    echo -e "    Multi:  Menu -> 2 -> 3 -> 3  (multi-port + multi-location)"
+    echo -e "    - Custom config name first"
+    echo -e "    - Same transport as B; use B public IP:port (not a wrong DNS)"
+    echo -e "    - Target: 127.0.0.1:PORT (Sanaei/Xray on B)"
     echo -e ""
     echo -e "${GREEN}Important tips:${NC}"
     echo -e "  - Both servers must use the same transport (both MWSS, or both TLS, ...)"
     echo -e "  - WebSocket path must match on both sides (default /ws)"
     echo -e "  - Create B first, then A"
-    echo -e "  - Test: connect client to IP_A:8080; it should reach Target on B"
+    echo -e "  - Client connects to Server A listen port (not B's Sanaei port unless mapped)"
+}
+
+print_guide_multi() {
+    echo -e "${CYAN}========== Multi-Port + Multi-Location ==========${NC}"
+    echo -e "Menu -> 2 -> 3 -> 3"
+    echo -e ""
+    echo -e "1) Set a ${YELLOW}config group name${NC} (e.g. sanaei-home)"
+    echo -e "2) Add one or more ${YELLOW}locations${NC} (each Server B: name + IP:port)"
+    echo -e "3) Enter ${YELLOW}ports${NC} list (e.g. 8080,8443)"
+    echo -e "4) Choose mode:"
+    echo -e "   ${GREEN}A) Separate port per location${NC} (recommended)"
+    echo -e "      listen = PORT + (location_index * offset)"
+    echo -e "      Example offset 10000: US=:8080  DE=:18080  TR=:28080"
+    echo -e "   ${YELLOW}B) Shared ports + selector${NC} (fifo/round/rand)"
+    echo -e "      One listen port; GOST picks a healthy location"
+    echo -e ""
+    echo -e "Each Server B still needs its own upstream (Menu -> 2 -> 3 -> 2)."
 }
 
 print_guide_reverse() {
@@ -2426,24 +2741,26 @@ help_menu() {
         echo -e "\n${CYAN}========== Help ==========${NC}"
         echo -e "1) Overview - where should I start?"
         echo -e "2) Two-server tunnel (Remote Port Forward) ${GREEN}<- most common${NC}"
-        echo -e "3) Reverse tunnel (behind NAT)"
-        echo -e "4) Single-server proxy"
-        echo -e "5) Local port forward"
-        echo -e "6) Transport / anti-DPI (TLS/WSS/MWSS)"
-        echo -e "7) Other services + Policies"
-        echo -e "8) Troubleshooting"
+        echo -e "3) Multi-port + Multi-location"
+        echo -e "4) Reverse tunnel (behind NAT)"
+        echo -e "5) Single-server proxy"
+        echo -e "6) Local port forward"
+        echo -e "7) Transport / anti-DPI (TLS/WSS/MWSS)"
+        echo -e "8) Other services + Policies"
+        echo -e "9) Troubleshooting"
         echo -e "0) Back to main menu"
-        read -p "Choice (0-8): " h
+        read -p "Choice (0-9): " h
         case $h in
             1) print_guide_overview; pause_help ;;
             2) print_guide_two_server; pause_help ;;
-            3) print_guide_reverse; pause_help ;;
-            4) print_guide_proxy; pause_help ;;
-            5) print_guide_local_forward; pause_help ;;
-            6) print_guide_transport; pause_help ;;
-            7) print_guide_other; pause_help ;;
-            8) print_guide_troubleshoot; pause_help ;;
-            0|q|Q|b|B|9) break ;;
+            3) print_guide_multi; pause_help ;;
+            4) print_guide_reverse; pause_help ;;
+            5) print_guide_proxy; pause_help ;;
+            6) print_guide_local_forward; pause_help ;;
+            7) print_guide_transport; pause_help ;;
+            8) print_guide_other; pause_help ;;
+            9) print_guide_troubleshoot; pause_help ;;
+            0|q|Q|b|B) break ;;
             *) echo -e "${RED}Invalid!${NC}" ;;
         esac
     done
@@ -2459,7 +2776,8 @@ ask_show_quick_help() {
         return 0
     fi
     case "$topic" in
-        two_server) print_guide_two_server ;;
+        two_server) print_guide_two_server; print_guide_multi ;;
+        multi) print_guide_multi ;;
         reverse) print_guide_reverse ;;
         proxy) print_guide_proxy ;;
         local_fwd) print_guide_local_forward ;;
