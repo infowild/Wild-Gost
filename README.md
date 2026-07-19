@@ -17,13 +17,13 @@
 برای نصب فوری و راه‌اندازی پنل روی سرور خام لینوکس (Ubuntu, Debian, CentOS)، دستور زیر را کپی و در ترمینال اجرا کنید:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/infowild338/wild-gost/master/gost.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/infowild/Wild-Gost/master/gost.sh)
 ```
 
 یا به صورت دستی:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/infowild338/wild-gost/master/gost.sh -o gost.sh && chmod +x gost.sh && sudo ./gost.sh
+curl -fsSL https://raw.githubusercontent.com/infowild/Wild-Gost/master/gost.sh -o gost.sh && chmod +x gost.sh && sudo ./gost.sh
 ```
 
 ### نحوه استفاده پس از نصب
@@ -127,8 +127,8 @@ docker run --rm gogost/gost -V
 
 #### کامپایل از سورس
 ```bash
-git clone https://github.com/infowild338/wild-gost.git
-cd wild-gost/cmd/gost
+git clone https://github.com/infowild/Wild-Gost.git
+cd Wild-Gost/cmd/gost
 go build
 ```
 
@@ -154,13 +154,13 @@ go build
 To quickly install and launch on any Linux server (Ubuntu, Debian, CentOS), run:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/infowild338/wild-gost/master/gost.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/infowild/Wild-Gost/master/gost.sh)
 ```
 
 Or manually:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/infowild338/wild-gost/master/gost.sh -o gost.sh && chmod +x gost.sh && sudo ./gost.sh
+curl -fsSL https://raw.githubusercontent.com/infowild/Wild-Gost/master/gost.sh -o gost.sh && chmod +x gost.sh && sudo ./gost.sh
 ```
 
 ### Usage After Installation
@@ -264,8 +264,8 @@ docker run --rm gogost/gost -V
 
 #### Build from Source
 ```bash
-git clone https://github.com/infowild338/wild-gost.git
-cd wild-gost/cmd/gost
+git clone https://github.com/infowild/Wild-Gost.git
+cd Wild-Gost/cmd/gost
 go build
 ```
 
