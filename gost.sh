@@ -105,7 +105,24 @@ install_gost() {
     # Setup service
     create_systemd_service
     
+    # Copy this script to system path
+    cp "$0" /usr/local/bin/gost-manage.sh
+    chmod +x /usr/local/bin/gost-manage.sh
+    
+    # Create the wrapper script 'wild'
+    cat <<'EOF' > /usr/local/bin/wild
+#!/usr/bin/env bash
+if [ "$1" = "gost" ]; then
+    /usr/local/bin/gost-manage.sh
+else
+    echo "دستور ناشناخته. آیا منظورتان 'wild gost' بود؟"
+    echo "Unknown command. Did you mean 'wild gost'?"
+fi
+EOF
+    chmod +x /usr/local/bin/wild
+
     echo -e "${GREEN}نصب GOST با موفقیت انجام شد! نسخه: $latest_ver${NC}"
+    echo -e "${GREEN}از این پس می‌توانید با تایپ دستور ${YELLOW}wild gost${GREEN} به این منو دسترسی داشته باشید.${NC}"
     /usr/local/bin/gost -V
 }
 
@@ -406,8 +423,10 @@ uninstall_gost() {
     rm -f /etc/systemd/system/gost.service
     systemctl daemon-reload
     
-    echo -e "${CYAN}در حال حذف فایل باینری...${NC}"
+    echo -e "${CYAN}در حال حذف فایل باینری و دستورات...${NC}"
     rm -f /usr/local/bin/gost
+    rm -f /usr/local/bin/gost-manage.sh
+    rm -f /usr/local/bin/wild
     
     read -p "آیا می‌خواهید فایل‌های پیکربندی در /etc/gost نیز حذف شوند؟ (y/n): " delete_config
     if [ "$delete_config" = "y" ] || [ "$delete_config" = "Y" ]; then

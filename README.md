@@ -1,106 +1,53 @@
-# GO Simple Tunnel
+# 🚀 Wild GOST (GO Simple Tunnel Manager)
 
-### GO语言实现的安全隧道
+[English Guide](#-english-guide) | [راهنمای فارسی](#-راهنمای-فارسی-persian-guide)
 
-[![zh](https://img.shields.io/badge/Chinese%20README-green)](README.md) [![en](https://img.shields.io/badge/English%20README-gray)](README_en.md)
+---
 
-## 功能特性
+## 🇮🇷 راهنمای فارسی (Persian Guide)
 
-- [x] [多端口监听](https://gost.run/getting-started/quick-start/)
-- [x] [多级转发链](https://gost.run/concepts/chain/)
-- [x] [多协议支持](https://gost.run/tutorials/protocols/overview/)
-- [x] [TCP/UDP端口转发](https://gost.run/tutorials/port-forwarding/)
-- [x] [反向代理](https://gost.run/tutorials/reverse-proxy/)和[隧道](https://gost.run/tutorials/reverse-proxy-tunnel/)
-- [x] [TCP/UDP透明代理](https://gost.run/tutorials/redirect/)
-- [x] DNS[解析](https://gost.run/concepts/resolver/)和[代理](https://gost.run/tutorials/dns/)
-- [x] [TUN/TAP设备](https://gost.run/tutorials/tuntap/)与[TUN2SOCKS](https://gost.run/tutorials/tungo/)
-- [x] [负载均衡](https://gost.run/concepts/selector/)
-- [x] [路由控制](https://gost.run/concepts/bypass/)
-- [x] [准入控制](https://gost.run/concepts/admission/)
-- [x] [限速限流](https://gost.run/concepts/limiter/)
-- [x] [插件系统](https://gost.run/concepts/plugin/)
-- [x] [Prometheus监控指标](https://gost.run/tutorials/metrics/)
-- [x] [动态配置](https://gost.run/tutorials/api/config/)
-- [x] [Web API](https://gost.run/tutorials/api/overview/)
-- [x] [GUI](https://github.com/go-gost/gostctl)/[WebUI](https://github.com/go-gost/gost-ui)
+پروژه **Wild GOST** یک بسته‌ی بهینه‌سازی‌شده از سرویس محبوب **GOST v3** (یک تونل امنیتی ساده و همه‌کاره نوشته شده در Go) است که به یک اسکریپت نصب آسان و پنل مدیریت تعاملی (منوی رنگی لینوکس) مجهز شده است. با استفاده از این ابزار می‌توانید انواع تونل‌های پروکسی را بدون نیاز به ویرایش دستی فایل‌های تنظیمات، راه‌اندازی و مدیریت کنید.
 
-## 概览
+### ویژگی‌های اسکریپت مدیریت:
+- **نصب و بروزرسانی آسان:** شناسایی خودکار معماری سخت‌افزار سرور و دانلود آخرین نسخه رسمی پایدار GOST از گیت‌هاب.
+- **یکپارچه‌سازی با سیستم (Systemd):** اجرای خودکار در پس‌زمینه به عنوان سرویس سیستمی و مدیریت چرخه حیات (شروع، توقف، ریستارت و لاگ‌ها).
+- **منوی تعاملی افزودن/حذف تونل:** پشتیبانی از پروتکل‌های ورودی **SOCKS5**، **HTTP**، **Relay Server**، **TCP/UDP Port Forwarding** و **Shadowsocks (SS)**.
+- **پشتیبانی از زنجیره پروکسی (Upstream Chain):** امکان هدایت اتصالات از میان یک پروکسی بالادستی دیگر به صورت زنجیره‌ای.
+- **دسترسی سریع:** امکان باز کردن پنل در هر زمان با زدن دستور اختصاصی `wild gost`.
 
-![Overview](https://gost.run/images/overview.png)
-
-GOST作为隧道有三种主要使用方式。
-
-### 正向代理
-
-作为代理服务访问网络，可以组合使用多种协议组成转发链进行转发。
-
-![Proxy](https://gost.run/images/proxy.png)
-
-### 端口转发
-
-将一个服务的端口映射到另外一个服务的端口，同样可以组合使用多种协议组成转发链进行转发。
-
-![Forward](https://gost.run/images/forward.png)
-
-### 反向代理
-
-利用隧道和内网穿透将内网服务暴露到公网访问。
-
-![Reverse Proxy](https://gost.run/images/reverse-proxy.png)
-
-## 下载安装
-
-### 二进制文件
-
-[https://github.com/go-gost/gost/releases](https://github.com/go-gost/gost/releases)
-
-### 安装脚本
-
+### ⚡ دستور نصب آسان (Easy Install Command)
+برای نصب فوری و راه‌اندازی پنل روی سرور خام لینوکس (توزیع‌های Ubuntu, Debian, CentOS)، دستور زیر را کپی و در ترمینال اجرا کنید:
 ```bash
-# 安装最新版本 [https://github.com/go-gost/gost/releases](https://github.com/go-gost/gost/releases)
-bash <(curl -fsSL https://github.com/go-gost/gost/raw/master/install.sh) --install
+curl -fsSL https://raw.githubusercontent.com/infowild338/wild-gost/master/gost.sh -o gost.sh && chmod +x gost.sh && ./gost.sh
 ```
+
+### نحوه استفاده پس از نصب:
+پس از اجرای نصب از طریق گزینه اول منو، فایل‌های مورد نیاز سیستم کپی شده و دستور ثبت می‌شود. از این پس در هر زمان به راحتی با دستور زیر پنل مدیریت را باز کنید:
 ```bash
-# 选择要安装的版本
-bash <(curl -fsSL https://github.com/go-gost/gost/raw/master/install.sh)
+sudo wild gost
 ```
 
-### 源码编译
+---
 
+## 🇬🇧 English Guide
+
+**Wild GOST** is an optimized distribution of **GOST v3** (GO Simple Tunnel written in Go) equipped with a robust, interactive bash management script for Linux servers. It allows you to easily deploy and manage tunnel endpoints without manually writing JSON/YAML configurations.
+
+### Management Script Features:
+- **Auto Install & Update:** Dynamically detects your CPU architecture and downloads the latest stable GOST release.
+- **Systemd Service Integration:** Configures a system daemon to run GOST in the background and ensure persistent run-time.
+- **Interactive Tunnel Configuration:** Easily add or remove listener endpoints supporting **SOCKS5**, **HTTP**, **Relay**, **TCP/UDP Port Forwarding**, and **Shadowsocks (SS)**.
+- **Upstream Forwarding Chains:** Connect tunnels in a forwarding chain using upstream proxy hops.
+- **Global Shortcut:** Installs a command shortcut so you can open the console anywhere using the `wild gost` command.
+
+### ⚡ Easy Install Command
+To quickly install and launch the script on any Linux server, run the following command:
+```bash
+curl -fsSL https://raw.githubusercontent.com/infowild338/wild-gost/master/gost.sh -o gost.sh && chmod +x gost.sh && ./gost.sh
 ```
-git clone https://github.com/go-gost/gost.git
-cd gost/cmd/gost
-go build
+
+### How to Use:
+After executing the installation (Option 1 in the menu), the script and wrappers will be deployed. You can then open the tunnel management interface at any time by running:
+```bash
+sudo wild gost
 ```
-
-### Docker
-
-```
-docker run --rm gogost/gost -V
-```
-
-## 工具
-
-### GUI
-
-[go-gost/gostctl](https://github.com/go-gost/gostctl)
-
-### WebUI
-
-[go-gost/gost-ui](https://github.com/go-gost/gost-ui)
-
-### Shadowsocks Android插件
-
-[hamid-nazari/ShadowsocksGostPlugin](https://github.com/hamid-nazari/ShadowsocksGostPlugin)
-
-## 帮助与支持
-
-Wiki站点：[https://gost.run](https://gost.run)
-
-YouTube: [https://www.youtube.com/@gost-tunnel](https://www.youtube.com/@gost-tunnel)
-
-Telegram：[https://t.me/gogost](https://t.me/gogost)
-
-Google讨论组：[https://groups.google.com/d/forum/go-gost](https://groups.google.com/d/forum/go-gost)
-
-旧版入口：[v2.gost.run](https://v2.gost.run)
