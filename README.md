@@ -40,32 +40,46 @@ sudo wild gost
 =============================================
     Wild GOST - Easy Tunnel Management
 =============================================
-1) Install or Update GOST
-2) Add Service / Tunnel (all types)
-3) Remove a Service
-4) View Services & Config Summary
-5) Policies (Bypass / Admission / Limiter / API / Metrics)
-6) Manage System Service (Start/Stop/Restart)
-7) Logs & Diagnostics
-8) Show Raw Config JSON
-9) Help / Tunnel usage guide
-10) Completely Uninstall GOST
+1) Install / Update
+2) Add
+3) Edit
+4) Remove
+5) List
+6) Service (start/stop/restart)
+7) Logs
+8) Advanced
+9) Uninstall
 0) Exit
 =============================================
+```
+
+**منوی Add (`2`):**
+
+```text
+1) Upstream (Server B)
+2) Entry single (Server A)
+3) Entry multi-port / multi-location (Server A)
+4) Proxy (SOCKS/HTTP/SS/...)
+5) Local port forward
+6) Reverse tunnel
+7) More (DNS/TUN/File/Redirect)
+0) Back
 ```
 
 ### ویژگی‌های اسکریپت مدیریت
 
 | ویژگی | توضیح |
 |:---|:---|
-| 🔧 نصب و بروزرسانی خودکار | شناسایی معماری (amd64, arm64, armv7, 386, …) و دانلود آخرین نسخه پایدار |
-| ⚙️ یکپارچه‌سازی با Systemd | سرویس پس‌زمینه با Start / Stop / Restart |
-| ➕ انواع تونل تعاملی | پروکسی، Port Forward، تونل دو سرور، Reverse، DNS، Redirect، TUN، File |
-| 🛡️ Transport ضد-DPI | TLS / WSS / MWSS (multiplex) برای مسیر بین دو سرور |
-| 🔐 احراز هویت | Username/Password برای endpointها |
-| 📋 مدیریت JSON با `jq` | ویرایش امن کانفیگ بدون خراب شدن فایل |
-| 📜 لاگ و عیب‌یابی | Live log، فیلتر خطا، export، validate کانفیگ |
-| 🗑️ حذف کامل | پاکسازی باینری، سرویس، دستورات و کل `/etc/gost` |
+| 🔧 نصب و بروزرسانی خودکار | شناسایی معماری و دانلود آخرین نسخه پایدار |
+| ⚙️ یکپارچه‌سازی با Systemd | Start / Stop / Restart |
+| ➕ تونل دو سرور | Upstream (B) + Entry تک‌پورت یا Multi-Port/Location |
+| 🏷️ نام دلخواه | برای هر کانفیگ / لوکیشن |
+| ✏️ Edit | ویرایش سرویس، chain، upstream، target، transport، policies |
+| 🛡️ Transport ضد-DPI | TLS / WSS / MWSS |
+| 🔐 احراز هویت | Username/Password |
+| 📋 مدیریت JSON با `jq` | ویرایش امن کانفیگ |
+| 📜 Logs | Live / Errors / Export / Validate |
+| 🗑️ حذف کامل | باینری، سرویس، دستورات و کل `/etc/gost` |
 
 ---
 
@@ -75,82 +89,89 @@ sudo wild gost
 
 ```bash
 sudo wild gost
-# گزینه 1 = Install or Update GOST
+# گزینه 1 = Install / Update
 ```
 
-از این به بعد با همان دستور وارد پنل می‌شوید. در منو، گزینه **۹ = Help** هم راهنمای کوتاه داخل خود اسکریپت است.
+از این به بعد با همان دستور وارد پنل می‌شوید. راهنمای کامل در همین README است (دیگر منوی Help داخل اسکریپت نیست).
 
 #### ۱) کدام نوع تونل را انتخاب کنم؟
 
 | نیاز شما | مسیر منو | توضیح کوتاه |
 |:---|:---|:---|
-| فقط پروکسی روی یک سرور (SOCKS/HTTP/SS) | `2 → 1` | کلاینت مستقیم به همین سرور وصل می‌شود |
-| فوروارد پورت روی همین سرور | `2 → 2` | مثلاً `:8080` به `192.168.1.10:80` |
-| **تونل بین دو سرور (رایج‌ترین)** | `2 → 3` | کلاینت → سرور A → سرور B → هدف |
-| سرویس پشت NAT / بدون IP عمومی | `2 → 4` | Reverse Tunnel |
-| DNS محلی | `2 → 6` | DNS proxy + upstream |
-| پروکسی شفاف | `2 → 5` | نیاز به iptables/nftables |
-| TUN / VPN-مانند | `2 → 7` | بعد از ساخت، IP/route را خودتان تنظیم کنید |
+| **Upstream روی سرور خارج (B)** | `2 → 1` | Relay/SOCKS برای تونل دو سرور |
+| **Entry تک‌پورت روی سرور ایران (A)** | `2 → 2` | کلاینت → A → B → Target |
+| **چند پورت / چند لوکیشن روی A** | `2 → 3` | چند listen و چند Server B |
+| پروکسی تک‌سروره (SOCKS/HTTP/SS) | `2 → 4` | کلاینت مستقیم به همین سرور |
+| فوروارد پورت محلی | `2 → 5` | مثلاً `:8080` → `192.168.1.10:80` |
+| سرویس پشت NAT | `2 → 6` | Reverse Tunnel |
+| DNS / TUN / File / Redirect | `2 → 7` | سایر سرویس‌ها |
 
 ---
 
-#### ۲) تونل دو سرور (Remote Port Forward) — گام‌به‌گام
-
-این رایج‌ترین سناریو است:
+#### ۲) تونل دو سرور — گام‌به‌گام
 
 ```text
 Client  -->  Server A (listen)  -->  Transport  -->  Server B  -->  Target
-مثال:     -->  A:8080           -->  MWSS      -->  B:443     -->  127.0.0.1:80
+مثال:     -->  A:8080           -->  MWSS      -->  B:443     -->  127.0.0.1:8080
 ```
 
 **نقش‌ها**
 
 | سرور | نقش | کار |
 |:---|:---|:---|
-| **Server B** | Upstream / Exit | Relay یا SOCKS5 را گوش می‌دهد؛ هدف معمولاً روی همین شبکه است |
+| **Server B** | Upstream / Exit | Relay را گوش می‌دهد؛ هدف معمولاً روی همین ماشین است (مثلاً سنایی) |
 | **Server A** | Entry | پورت عمومی را باز می‌کند و ترافیک را از طریق chain به B می‌فرستد |
 
 **گام ۱ — روی Server B (اول این را بسازید)**
 
-1. `sudo wild gost` → گزینه `2` → گزینه `3` → `2) Server B`
-2. پورت مثلاً `443`
-3. پروتکل: **Relay** (پیشنهادی)
-4. Transport: **4 = MWSS** (پیشنهادی برای ضد-DPI)
-5. در صورت نیاز username/password
-6. WebSocket path را یادداشت کنید (پیش‌فرض `/ws`)
+1. `sudo wild gost` → `2` → `1) Upstream`
+2. یک **نام** بگذارید (مثلاً `US`)
+3. پورت مثلاً `443` یا `2018`
+4. پروتکل: **Relay**
+5. Transport: **4 = MWSS**
+6. path را یادداشت کنید (پیش‌فرض `/ws`)
+7. در صورت نیاز username/password
 
-**گام ۲ — روی Server A**
+**گام ۲ — روی Server A (تک‌پورت)**
 
-1. `sudo wild gost` → گزینه `2` → گزینه `3` → `1) Server A`
-2. Listen port مثلاً `8080`
-3. TCP یا UDP
-4. Upstream type = همان Relay
-5. **همان Transport** (مثلاً MWSS) و **همان path** (`/ws`)
-6. آدرس Server B: `IP_B:443`
-7. Target: مثلاً `127.0.0.1:80` (سرویسی که از روی B در دسترس است)
+1. `sudo wild gost` → `2` → `2) Entry single`
+2. نام کانفیگ
+3. Listen port (همان پورتی که کلاینت به آن وصل می‌شود)
+4. TCP یا UDP
+5. Connector = Relay + **همان Transport و path**
+6. آدرس B: ترجیحاً **IP عمومی** (`IP_B:PORT`) نه دامنه‌ای که به سرور اشتباه می‌خورد
+7. Target: مثلاً `127.0.0.1:8080` (inbound سنایی روی B)
+
+**گام ۲ جایگزین — Multi-Port / Multi-Location**
+
+1. `sudo wild gost` → `2` → `3) Entry multi`
+2. نام گروه کانفیگ
+3. چند Location (نام + `IP:port` هر Server B)
+4. لیست پورت‌ها (مثلاً `8080,8443`)
+5. حالت:
+   - **port per location**: `listen = PORT + (index × offset)` — مثلاً offset `10000` → US=`:8080`، DE=`:18080`
+   - **shared + selector**: یک پورت، انتخاب خودکار (`fifo` / `round` / `rand`)
 
 **قواعد طلایی**
 
-- اول B را بسازید، بعد A
-- Transport و path دو طرف باید یکی باشد
+- اول B، بعد A
+- Transport و path دو طرف یکی باشد
+- کلاینت به **پورت listen روی A** وصل می‌شود (نه لزوماً پورت سنایی روی B)
 - برای ضد-DPI ترجیحاً **MWSS + پورت 443**
-- فایروال هر دو سرور باید پورت‌ها را باز کند
-- تست: کلاینت را به `IP_A:8080` وصل کنید؛ باید به Target روی B برسید
+- فایروال هر دو سرور پورت‌ها را باز کند
 
-**Transportها (ضد-DPI)**
+**Transportها**
 
 | گزینه | معنی | توصیه |
 |:---|:---|:---|
-| Plain TCP | ساده و خام | ریسک شناسایی بالا |
-| TLS | رمزنگاری، شبیه HTTPS | خوب |
+| TCP | ساده | ریسک شناسایی بالا |
+| TLS | شبیه HTTPS | خوب |
 | WSS | WebSocket روی TLS | بهتر |
-| **MWSS** | TLS + WebSocket + multiplex | **پیشنهادی** — چند session روی اتصال کمتر |
+| **MWSS** | TLS + WS + multiplex | **پیشنهادی** |
 
 ---
 
 #### ۳) Reverse Tunnel (پشت NAT)
-
-وقتی سرویس داخل شبکه خصوصی است و IP عمومی ندارد:
 
 ```text
 Internet --> Public Server (entrypoint)
@@ -159,39 +180,16 @@ Internet --> Public Server (entrypoint)
            NAT Client --> Local service (مثلاً 127.0.0.1:80)
 ```
 
-**گام ۱ — سرور عمومی (Server)**
-
-- منو: `2 → 4 → 1`
-- Tunnel port (مثلاً `8421`)
-- Entrypoint port (مثلاً `8420`) = پورتی که از اینترنت دیده می‌شود
-- Hostname برای ingress (مثلاً `app.example.com`)
-- **Tunnel ID (UUID)** را کپی و ذخیره کنید
-
-**گام ۲ — سرور پشت NAT (Client)**
-
-- منو: `2 → 4 → 2`
-- همان Tunnel ID
-- آدرس سرور عمومی: `IP:8421`
-- Target محلی: `127.0.0.1:80`
-- `rtcp` برای TCP یا `rudp` برای UDP
-
-دسترسی از بیرون معمولاً از طریق entrypoint سرور عمومی انجام می‌شود.
+**گام ۱ — سرور عمومی:** `2 → 6 → 1` — Tunnel port، Entrypoint، Hostname؛ **Tunnel ID** را ذخیره کنید  
+**گام ۲ — پشت NAT:** `2 → 6 → 2` — همان Tunnel ID، آدرس سرور عمومی، Target محلی (`rtcp`/`rudp`)
 
 ---
 
 #### ۴) پروکسی تک‌سروره
 
-منو: `2 → 1`
+منو: `2 → 4`
 
-مناسب برای SOCKS5 / HTTP / Relay / Shadowsocks روی همین ماشین.
-
-1. پروتکل را انتخاب کنید
-2. پورت listen
-3. Transport listener (معمولاً `tcp`؛ برای ضد-DPI: `tls` / `wss` / `mwss`)
-4. در صورت نیاز auth
-5. اگر می‌خواهید ترافیک از پروکسی دیگری رد شود: Attach upstream chain = `y`
-
-نمونه اتصال کلاینت:
+SOCKS5 / HTTP / Relay / Shadowsocks روی همین ماشین. در صورت نیاز chain بالادستی هم می‌توانید وصل کنید.
 
 ```text
 socks5://SERVER_IP:1080
@@ -202,37 +200,35 @@ http://SERVER_IP:8080
 
 #### ۵) Local Port Forward
 
-منو: `2 → 2`
-
-پورت محلی را به یک هدف نگاشت می‌کند:
+منو: `2 → 5`
 
 ```text
 listen :8080  -->  192.168.1.10:80
 ```
 
-اگر chain بسازید، فوروارد از طریق پروکسی واسط انجام می‌شود.
-
 ---
 
-#### ۶) عیب‌یابی تونل
+#### ۶) Edit / حذف / عیب‌یابی
 
 | کار | مسیر |
 |:---|:---|
-| لیست سرویس‌ها / Upstream / Target | منو `4` |
+| ویرایش سرویس / upstream / target | منو `3` |
+| لیست سرویس‌ها | منو `5` |
+| Start / Stop / Restart | منو `6` |
 | لاگ زنده و خطاها | منو `7` |
-| JSON خام | منو `8` |
-| Restart سرویس | منو `6` |
-| حذف و ساخت مجدد | منو `3` سپس دوباره `2` |
+| Limiter / API / JSON خام | منو `8` |
+| حذف سرویس | منو `4` |
 
-چک‌لیست سریع:
+چک‌لیست:
 
-1. سرویس در منو ۴ دیده می‌شود؟
-2. در لاگ خطای `dial` / `connect` / `auth` هست؟
-3. فایروال پورت را باز کرده؟
-4. Transport و path دو سرور یکی است؟
-5. روی B اول upstream بالا آمده، بعد A؟
+1. سرویس در List دیده می‌شود؟
+2. لاگ خطای `dial` / `timeout` / `auth`؟
+3. فایروال باز است؟
+4. Transport و path یکی است؟
+5. Upstream روی B قبل از A بالا آمده؟
+6. کلاینت به پورت **A** وصل است؟
 
-برای جزئیات بیشتر موقتاً Log level را در منو `7` روی **debug** بگذارید، مشکل را بازتولید کنید، بعد دوباره به **info** برگردانید.
+Log level: منو `7` → Debug، مشکل را بازتولید کنید، بعد Info.
 
 ---
 
@@ -349,32 +345,46 @@ sudo wild gost
 =============================================
     Wild GOST - Easy Tunnel Management
 =============================================
-1) Install or Update GOST
-2) Add Service / Tunnel (all types)
-3) Remove a Service
-4) View Services & Config Summary
-5) Policies (Bypass / Admission / Limiter / API / Metrics)
-6) Manage System Service (Start/Stop/Restart)
-7) Logs & Diagnostics
-8) Show Raw Config JSON
-9) Help / Tunnel usage guide
-10) Completely Uninstall GOST
+1) Install / Update
+2) Add
+3) Edit
+4) Remove
+5) List
+6) Service (start/stop/restart)
+7) Logs
+8) Advanced
+9) Uninstall
 0) Exit
 =============================================
+```
+
+**Add menu (`2`):**
+
+```text
+1) Upstream (Server B)
+2) Entry single (Server A)
+3) Entry multi-port / multi-location (Server A)
+4) Proxy (SOCKS/HTTP/SS/...)
+5) Local port forward
+6) Reverse tunnel
+7) More (DNS/TUN/File/Redirect)
+0) Back
 ```
 
 ### Management Script Features
 
 | Feature | Description |
 |:---|:---|
-| 🔧 Auto Install & Update | Detects CPU architecture and downloads the latest stable release |
-| ⚙️ Systemd Integration | Background daemon with start / stop / restart |
-| ➕ Interactive Tunnel Types | Proxy, port forward, two-server tunnel, reverse, DNS, redirect, TUN, file |
-| 🛡️ Anti-DPI Transport | TLS / WSS / MWSS (multiplex) between servers |
-| 🔐 Authentication | Username/password per endpoint |
+| 🔧 Auto Install & Update | Detects architecture and downloads the latest stable release |
+| ⚙️ Systemd Integration | Start / Stop / Restart |
+| ➕ Two-server tunnel | Upstream (B) + single or multi-port/location Entry (A) |
+| 🏷️ Custom names | Per config / location |
+| ✏️ Edit | Service, chain, upstream, target, transport, policies |
+| 🛡️ Anti-DPI Transport | TLS / WSS / MWSS |
+| 🔐 Authentication | Username/password |
 | 📋 Safe JSON Config | Edited with `jq` |
-| 📜 Logs & Diagnostics | Live logs, error filter, export, config validation |
-| 🗑️ Full Uninstall | Removes binary, service, commands, and all of `/etc/gost` |
+| 📜 Logs | Live / Errors / Export / Validate |
+| 🗑️ Full Uninstall | Binary, service, commands, and all of `/etc/gost` |
 
 ---
 
@@ -384,82 +394,89 @@ On **every** server you use:
 
 ```bash
 sudo wild gost
-# Option 1 = Install or Update GOST
+# Option 1 = Install / Update
 ```
 
-Use the same command later to reopen the panel. Menu **9 = Help** also shows a short in-script guide.
+Full guides live in this README (there is no in-script Help menu anymore).
 
 #### 1) Which tunnel type should I choose?
 
 | Your need | Menu path | Short description |
 |:---|:---|:---|
-| Single-server proxy (SOCKS/HTTP/SS) | `2 → 1` | Client connects directly to this server |
-| Local port forward | `2 → 2` | e.g. `:8080` → `192.168.1.10:80` |
-| **Two-server tunnel (most common)** | `2 → 3` | Client → Server A → Server B → Target |
-| Service behind NAT / no public IP | `2 → 4` | Reverse Tunnel |
-| Local DNS | `2 → 6` | DNS proxy + upstream |
-| Transparent proxy | `2 → 5` | Needs iptables/nftables |
-| TUN / VPN-like | `2 → 7` | After create, configure IP/routes yourself |
+| **Upstream on exit server (B)** | `2 → 1` | Relay/SOCKS for two-server tunnel |
+| **Single entry on entry server (A)** | `2 → 2` | Client → A → B → Target |
+| **Multi-port / multi-location on A** | `2 → 3` | Several listens and several Server B nodes |
+| Single-server proxy (SOCKS/HTTP/SS) | `2 → 4` | Client connects directly to this server |
+| Local port forward | `2 → 5` | e.g. `:8080` → `192.168.1.10:80` |
+| Service behind NAT | `2 → 6` | Reverse Tunnel |
+| DNS / TUN / File / Redirect | `2 → 7` | Other services |
 
 ---
 
-#### 2) Two-server tunnel (Remote Port Forward) — step by step
-
-This is the most common scenario:
+#### 2) Two-server tunnel — step by step
 
 ```text
 Client  -->  Server A (listen)  -->  Transport  -->  Server B  -->  Target
-Example:     -->  A:8080           -->  MWSS      -->  B:443     -->  127.0.0.1:80
+Example:     -->  A:8080           -->  MWSS      -->  B:443     -->  127.0.0.1:8080
 ```
 
 **Roles**
 
 | Server | Role | What it does |
 |:---|:---|:---|
-| **Server B** | Upstream / Exit | Runs Relay or SOCKS5; target is usually on this network |
+| **Server B** | Upstream / Exit | Runs Relay; target is usually on this host (e.g. panel inbound) |
 | **Server A** | Entry | Opens the public listen port and sends traffic to B via a chain |
 
 **Step 1 — On Server B (create this first)**
 
-1. `sudo wild gost` → `2` → `3` → `2) Server B`
-2. Port e.g. `443`
-3. Protocol: **Relay** (recommended)
-4. Transport: **4 = MWSS** (recommended for anti-DPI)
-5. Optional username/password
+1. `sudo wild gost` → `2` → `1) Upstream`
+2. Give it a **name** (e.g. `US`)
+3. Port e.g. `443` or `2018`
+4. Protocol: **Relay**
+5. Transport: **4 = MWSS**
 6. Note the WebSocket path (default `/ws`)
+7. Optional username/password
 
-**Step 2 — On Server A**
+**Step 2 — On Server A (single entry)**
 
-1. `sudo wild gost` → `2` → `3` → `1) Server A`
-2. Listen port e.g. `8080`
-3. TCP or UDP
-4. Upstream type = same Relay
-5. **Same transport** (e.g. MWSS) and **same path** (`/ws`)
-6. Server B address: `IP_B:443`
-7. Target: e.g. `127.0.0.1:80` (reachable from B)
+1. `sudo wild gost` → `2` → `2) Entry single`
+2. Config name
+3. Listen port (the port clients connect to)
+4. TCP or UDP
+5. Connector = Relay + **same transport and path**
+6. B address: prefer the **public IP** (`IP_B:PORT`)
+7. Target: e.g. `127.0.0.1:8080` (inbound on B)
+
+**Step 2 alternative — Multi-Port / Multi-Location**
+
+1. `sudo wild gost` → `2` → `3) Entry multi`
+2. Config group name
+3. Add locations (name + each Server B `IP:port`)
+4. Ports list (e.g. `8080,8443`)
+5. Mode:
+   - **port per location**: `listen = PORT + (index × offset)` — e.g. offset `10000` → US=`:8080`, DE=`:18080`
+   - **shared + selector**: one listen port; auto pick (`fifo` / `round` / `rand`)
 
 **Golden rules**
 
-- Build B first, then A
+- Create B first, then A
 - Transport and path must match on both sides
+- Clients connect to **A's listen port** (not necessarily B's app port)
 - Prefer **MWSS + port 443** for anti-DPI
 - Open firewall ports on both servers
-- Test: connect a client to `IP_A:8080`; it should reach Target on B
 
-**Transports (anti-DPI)**
+**Transports**
 
 | Option | Meaning | Advice |
 |:---|:---|:---|
-| Plain TCP | Simple / raw | High DPI risk |
-| TLS | Encrypted, HTTPS-like | Good |
+| TCP | Plain | High detection risk |
+| TLS | HTTPS-like | Good |
 | WSS | WebSocket over TLS | Better |
-| **MWSS** | TLS + WebSocket + multiplex | **Recommended** — fewer connections |
+| **MWSS** | TLS + WS + multiplex | **Recommended** |
 
 ---
 
 #### 3) Reverse Tunnel (behind NAT)
-
-Use when the service is on a private network with no public IP:
 
 ```text
 Internet --> Public Server (entrypoint)
@@ -468,39 +485,16 @@ Internet --> Public Server (entrypoint)
            NAT Client --> Local service (e.g. 127.0.0.1:80)
 ```
 
-**Step 1 — Public server (Server)**
-
-- Menu: `2 → 4 → 1`
-- Tunnel port (e.g. `8421`)
-- Entrypoint port (e.g. `8420`) = public-facing port
-- Ingress hostname (e.g. `app.example.com`)
-- Copy and save the **Tunnel ID (UUID)**
-
-**Step 2 — NAT server (Client)**
-
-- Menu: `2 → 4 → 2`
-- Same Tunnel ID
-- Public server address: `IP:8421`
-- Local target: `127.0.0.1:80`
-- `rtcp` for TCP or `rudp` for UDP
-
-External access is usually through the public server entrypoint.
+**Public server:** `2 → 6 → 1` — tunnel port, entrypoint, hostname; save the **Tunnel ID**  
+**NAT client:** `2 → 6 → 2` — same Tunnel ID, public server address, local target (`rtcp`/`rudp`)
 
 ---
 
 #### 4) Single-server proxy
 
-Menu: `2 → 1`
+Menu: `2 → 4`
 
-Good for SOCKS5 / HTTP / Relay / Shadowsocks on this machine.
-
-1. Choose protocol
-2. Listen port
-3. Listener transport (usually `tcp`; for anti-DPI: `tls` / `wss` / `mwss`)
-4. Optional auth
-5. To route via another proxy: Attach upstream chain = `y`
-
-Client examples:
+SOCKS5 / HTTP / Relay / Shadowsocks on this machine. Optional upstream chain supported.
 
 ```text
 socks5://SERVER_IP:1080
@@ -511,37 +505,35 @@ http://SERVER_IP:8080
 
 #### 5) Local Port Forward
 
-Menu: `2 → 2`
-
-Maps a local listen port to a target:
+Menu: `2 → 5`
 
 ```text
 listen :8080  -->  192.168.1.10:80
 ```
 
-If you attach a chain, forwarding goes through an upstream proxy.
-
 ---
 
-#### 6) Tunnel troubleshooting
+#### 6) Edit / remove / troubleshooting
 
 | Task | Path |
 |:---|:---|
-| List services / Upstream / Target | Menu `4` |
+| Edit service / upstream / target | Menu `3` |
+| List services | Menu `5` |
+| Start / Stop / Restart | Menu `6` |
 | Live logs and errors | Menu `7` |
-| Raw JSON | Menu `8` |
-| Restart service | Menu `6` |
-| Remove and recreate | Menu `3`, then `2` again |
+| Limiter / API / raw JSON | Menu `8` |
+| Remove a service | Menu `4` |
 
-Quick checklist:
+Checklist:
 
-1. Is the service listed in menu 4?
-2. Any `dial` / `connect` / `auth` errors in logs?
+1. Is the service listed?
+2. Any `dial` / `timeout` / `auth` errors in logs?
 3. Are firewall ports open?
-4. Do transport and path match on both servers?
+4. Do transport and path match?
 5. Is upstream on B up before A?
+6. Is the client connecting to **A's** port?
 
-For more detail, temporarily set log level to **debug** in menu `7`, reproduce the issue, then switch back to **info**.
+Log level: menu `7` → Debug, reproduce, then Info.
 
 ---
 
