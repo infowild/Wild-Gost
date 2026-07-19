@@ -75,7 +75,7 @@ prompt_or_back() {
     REPLY_VALUE=""
     read -p "$prompt (0=Back): " REPLY_VALUE
     if is_back_choice "$REPLY_VALUE"; then
-        echo -e "${YELLOW}بازگشت / لغو شد.${NC}"
+        echo -e "${YELLOW}Cancelled / going back.${NC}"
         return 1
     fi
     return 0
@@ -542,7 +542,7 @@ prompt_optional_chain() {
 add_proxy_service() {
     require_gost || return 1
     echo -e "${CYAN}--- Add Proxy / Handler Service ---${NC}"
-    echo -e "${YELLOW}پروکسی روی همین سرور. برای تانل دو سروره از منوی قبلی گزینه 3 را بزن.${NC}"
+    echo -e "${YELLOW}Proxy on this server. For a two-server tunnel, use option 3 in the previous menu.${NC}"
     ask_show_quick_help "proxy"
     echo -e " 1) SOCKS5     2) SOCKS4     3) HTTP       4) HTTP2"
     echo -e " 5) HTTP3      6) Relay      7) Shadowsocks 8) Auto"
@@ -633,7 +633,7 @@ add_proxy_service() {
 add_local_port_forward() {
     require_gost || return 1
     echo -e "${CYAN}--- Local Port Forward ---${NC}"
-    echo -e "${YELLOW}مثال: listen :8080 روی همین سرور → 192.168.1.10:80${NC}"
+    echo -e "${YELLOW}Example: listen :8080 on this server -> 192.168.1.10:80${NC}"
     ask_show_quick_help "local_fwd"
     local port target proto handler_type listener_type name svc
     echo -e "1) TCP  2) UDP"
@@ -670,7 +670,7 @@ add_local_port_forward() {
 setup_reverse_tunnel_server() {
     require_gost || return 1
     echo -e "${CYAN}--- Reverse Tunnel SERVER (public) ---${NC}"
-    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
+    echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
     local tunnel_port entry_port hostname tid name svc
     prompt_or_back "Tunnel listen port (e.g. 8421)" || return 0
     tunnel_port="$REPLY_VALUE"
@@ -712,7 +712,7 @@ setup_reverse_tunnel_server() {
 setup_reverse_tunnel_client() {
     require_gost || return 1
     echo -e "${CYAN}--- Reverse Tunnel CLIENT (behind NAT) ---${NC}"
-    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
+    echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
     local tid server_addr target proto handler_type name svc chain_name
     prompt_or_back "Tunnel ID (UUID from server)" || return 0
     tid="$REPLY_VALUE"
@@ -751,7 +751,7 @@ setup_reverse_tunnel_client() {
 setup_reverse_tunnel_menu() {
     while true; do
         echo -e "\n${CYAN}--- Reverse Proxy / Tunnel ---${NC}"
-        echo -e "${YELLOW}برای سرویس پشت NAT: اول Server (عمومی)، بعد Client (NAT). Tunnel ID را نگه دار.${NC}"
+        echo -e "${YELLOW}For services behind NAT: create Server (public) first, then Client (NAT). Keep the Tunnel ID.${NC}"
         echo -e "1) Server (public / ingress)"
         echo -e "2) Client (behind NAT / rtcp|rudp)"
         echo -e "3) Show reverse-tunnel help"
@@ -889,7 +889,7 @@ select_transport_preset() {
     WS_HOST=""
     TRANSPORT_LABEL="Plain TCP"
     echo -e "\n${CYAN}Select transport layer (anti-DPI):${NC}"
-    echo -e "${YELLOW}اگر گیج شدی: 4 = MWSS را بزن (پیشنهادی). دو سرور باید یکی باشند.${NC}"
+    echo -e "${YELLOW}If unsure: choose 4 = MWSS (recommended). Both servers must use the same transport.${NC}"
     echo -e "1) Plain TCP          ${RED}- high DPI risk${NC}"
     echo -e "2) TLS                ${YELLOW}- encrypted${NC}"
     echo -e "3) WSS                ${YELLOW}- HTTPS WebSocket${NC}"
@@ -922,7 +922,7 @@ select_transport_preset() {
 setup_remote_port_forward_upstream() {
     require_gost || return 1
     echo -e "${CYAN}--- Server B: Upstream ---${NC}"
-    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
+    echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
     local port handler_choice handler_type udp_enabled name svc meta=""
     prompt_or_back "Listening port (e.g. 443)" || return 0
     port="$REPLY_VALUE"
@@ -966,7 +966,7 @@ setup_remote_port_forward_upstream() {
 setup_remote_port_forward_entry() {
     require_gost || return 1
     echo -e "${CYAN}--- Server A: Entry + Remote Forward ---${NC}"
-    echo -e "${YELLOW}در هر مرحله می‌توانی 0 بزنی تا برگردی.${NC}"
+    echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
     local port proto handler_type listener_type connector_type upstream_addr target name chain_name svc ch
     prompt_or_back "Listen port on this server" || return 0
     port="$REPLY_VALUE"
@@ -1015,7 +1015,7 @@ setup_remote_port_forward() {
     while true; do
         echo -e "\n${CYAN}--- Remote Port Forward (Two-Server) ---${NC}"
         echo -e "${GREEN}Client → Server A (listen) → transport → Server B → Target${NC}"
-        echo -e "${YELLOW}ترتیب: اول Server B، بعد Server A. Transport دو طرف یکسان (پیشنهاد: MWSS روی 443).${NC}"
+        echo -e "${YELLOW}Order: configure Server B first, then Server A. Same transport on both (recommended: MWSS on 443).${NC}"
         echo -e "1) Server A (entry)"
         echo -e "2) Server B (upstream)"
         echo -e "3) Show two-server help"
@@ -1203,10 +1203,10 @@ add_service_menu() {
     require_gost || return 1
     while true; do
         echo -e "\n${CYAN}--- Add Service / Tunnel ---${NC}"
-        echo -e "${YELLOW}راهنمای سریع:${NC} تانل دو سرور = گزینه 3 | پشت NAT = گزینه 4 | فقط پروکسی = گزینه 1"
+        echo -e "${YELLOW}Quick tip:${NC} two-server tunnel = 3 | behind NAT = 4 | single proxy = 1"
         echo -e "1) Proxy server (SOCKS/HTTP/Relay/SS/HTTP2/HTTP3/SNI/SSHD/MASQUE/...)"
         echo -e "2) Local port forward (TCP/UDP + optional chain)"
-        echo -e "3) Remote port forward (two-server) ${GREEN}← تانل بین دو سرور${NC}"
+        echo -e "3) Remote port forward (two-server) ${GREEN}<- most common tunnel${NC}"
         echo -e "4) Reverse tunnel (NAT penetration)"
         echo -e "5) Transparent redirect"
         echo -e "6) DNS proxy (Do53 / DoT upstream)"
@@ -1252,7 +1252,7 @@ delete_tunnel() {
     echo -e "0) Back"
     read -p "Number to remove (0=Back): " choice
     if is_back_choice "$choice" || [ -z "$choice" ]; then
-        echo -e "${YELLOW}بازگشت.${NC}"
+        echo -e "${YELLOW}Going back.${NC}"
         return 0
     fi
     if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "$services_count" ]; then
@@ -1580,141 +1580,141 @@ pause_help() {
 }
 
 print_guide_overview() {
-    echo -e "${CYAN}========== راهنمای کلی Wild GOST ==========${NC}"
-    echo -e "این پنل فقط کانفیگ JSON برای هسته GOST می‌سازد."
-    echo -e "بعد از نصب، همیشه با دستور ${YELLOW}sudo wild gost${NC} وارد منو شوید."
+    echo -e "${CYAN}========== Wild GOST Overview ==========${NC}"
+    echo -e "This panel only builds JSON config for the GOST core."
+    echo -e "After install, open the menu anytime with: ${YELLOW}sudo wild gost${NC}"
     echo -e ""
-    echo -e "${GREEN}کدام گزینه را انتخاب کنم؟${NC}"
-    echo -e "  • فقط پروکسی روی یک سرور (SOCKS/HTTP/SS)     → منو 2 → 1"
-    echo -e "  • فوروارد پورت ساده روی همین سرور              → منو 2 → 2"
-    echo -e "  • تانل بین دو سرور (رایج‌ترین)                 → منو 2 → 3"
-    echo -e "  • سرور پشت NAT / فایروال (Reverse)             → منو 2 → 4"
-    echo -e "  • DNS / Redirect / TUN / File                   → منو 2 → 5~8"
+    echo -e "${GREEN}Which option should I use?${NC}"
+    echo -e "  - Single-server proxy (SOCKS/HTTP/SS)     -> Menu 2 -> 1"
+    echo -e "  - Simple local port forward               -> Menu 2 -> 2"
+    echo -e "  - Two-server tunnel (most common)         -> Menu 2 -> 3"
+    echo -e "  - Behind NAT / firewall (Reverse)         -> Menu 2 -> 4"
+    echo -e "  - DNS / Redirect / TUN / File             -> Menu 2 -> 5-8"
     echo -e ""
-    echo -e "${GREEN}ترتیب پیشنهادی اولین استفاده:${NC}"
-    echo -e "  1) روی هر دو سرور: منو 1 = Install"
-    echo -e "  2) اول Server B را بساز، بعد Server A"
-    echo -e "  3) برای ضد-DPI: transport را ${YELLOW}MWSS${NC} و ترجیحاً پورت ${YELLOW}443${NC} بگذار"
-    echo -e "  4) وضعیت را با منو 4 و لاگ را با منو 6 ببین"
+    echo -e "${GREEN}Recommended first-time order:${NC}"
+    echo -e "  1) On both servers: Menu 1 = Install"
+    echo -e "  2) Build Server B first, then Server A"
+    echo -e "  3) For anti-DPI: use transport ${YELLOW}MWSS${NC}, preferably port ${YELLOW}443${NC}"
+    echo -e "  4) Check status in Menu 4 and logs in Menu 7"
 }
 
 print_guide_two_server() {
-    echo -e "${CYAN}========== تانل دو سرور (Remote Port Forward) ==========${NC}"
-    echo -e "هدف: کلاینت به Server A وصل می‌شود؛ ترافیک از A به B و بعد به هدف می‌رود."
+    echo -e "${CYAN}========== Two-Server Tunnel (Remote Port Forward) ==========${NC}"
+    echo -e "Goal: client connects to Server A; traffic goes A -> B -> target."
     echo -e ""
-    echo -e "${YELLOW}مسیر ترافیک:${NC}"
+    echo -e "${YELLOW}Traffic path:${NC}"
     echo -e "  Client  -->  Server A (:listen)  -->  transport  -->  Server B  -->  Target"
-    echo -e " مثال:  Client --> A:8080 --> MWSS --> B:443(relay) --> 127.0.0.1:80"
+    echo -e "  Example: Client --> A:8080 --> MWSS --> B:443(relay) --> 127.0.0.1:80"
     echo -e ""
-    echo -e "${GREEN}گام‌به‌گام:${NC}"
-    echo -e "  ${YELLOW}گام 1 — روی Server B (سرور مقصد / خارج):${NC}"
-    echo -e "    منو → 2 → 3 → گزینه 2 (Server B)"
-    echo -e "    • پورت مثلاً 443"
-    echo -e "    • پروتکل: Relay (پیشنهادی)"
-    echo -e "    • Transport: 4 = MWSS"
-    echo -e "    • در صورت نیاز username/password"
+    echo -e "${GREEN}Step by step:${NC}"
+    echo -e "  ${YELLOW}Step 1 - On Server B (destination / exit):${NC}"
+    echo -e "    Menu -> 2 -> 3 -> option 2 (Server B)"
+    echo -e "    - Port e.g. 443"
+    echo -e "    - Protocol: Relay (recommended)"
+    echo -e "    - Transport: 4 = MWSS"
+    echo -e "    - Optional username/password"
     echo -e ""
-    echo -e "  ${YELLOW}گام 2 — روی Server A (سرور ورودی):${NC}"
-    echo -e "    منو → 2 → 3 → گزینه 1 (Server A)"
-    echo -e "    • Listen port مثلاً 8080"
-    echo -e "    • TCP یا UDP"
-    echo -e "    • Upstream = همان Relay + همان MWSS"
-    echo -e "    • آدرس B:  IP_B:443"
-    echo -e "    • Target:  127.0.0.1:PORT   (سرویسی که روی B در دسترس است)"
+    echo -e "  ${YELLOW}Step 2 - On Server A (entry):${NC}"
+    echo -e "    Menu -> 2 -> 3 -> option 1 (Server A)"
+    echo -e "    - Listen port e.g. 8080"
+    echo -e "    - TCP or UDP"
+    echo -e "    - Upstream = same Relay + same MWSS"
+    echo -e "    - B address: IP_B:443"
+    echo -e "    - Target: 127.0.0.1:PORT (service reachable from B)"
     echo -e ""
-    echo -e "${GREEN}نکته‌های مهم:${NC}"
-    echo -e "  • Transport دو سرور باید یکی باشد (هر دو MWSS یا هر دو TLS ...)"
-    echo -e "  • WebSocket path دو طرف یکی باشد (پیش‌فرض /ws)"
-    echo -e "  • اول B را بساز، بعد A"
-    echo -e "  • تست: از کلاینت به IP_A:8080 وصل شو؛ باید به Target روی B برسی"
+    echo -e "${GREEN}Important tips:${NC}"
+    echo -e "  - Both servers must use the same transport (both MWSS, or both TLS, ...)"
+    echo -e "  - WebSocket path must match on both sides (default /ws)"
+    echo -e "  - Create B first, then A"
+    echo -e "  - Test: connect client to IP_A:8080; it should reach Target on B"
 }
 
 print_guide_reverse() {
-    echo -e "${CYAN}========== Reverse Tunnel (پشت NAT) ==========${NC}"
-    echo -e "وقتی سرویس داخل شبکه خصوصی است و IP عمومی ندارد."
+    echo -e "${CYAN}========== Reverse Tunnel (behind NAT) ==========${NC}"
+    echo -e "Use when the service is on a private network with no public IP."
     echo -e ""
-    echo -e "${YELLOW}مسیر:${NC}"
+    echo -e "${YELLOW}Path:${NC}"
     echo -e "  Internet --> Public Server (entrypoint) <-- tunnel -- NAT Client --> Local service"
     echo -e ""
-    echo -e "${GREEN}گام‌به‌گام:${NC}"
-    echo -e "  ${YELLOW}1) روی سرور عمومی:${NC} منو → 2 → 4 → 1 (Server)"
-    echo -e "     • Tunnel port (مثلاً 8421)"
-    echo -e "     • Entrypoint port (مثلاً 8420) = پورتی که از اینترنت دیده می‌شود"
-    echo -e "     • Hostname برای ingress (مثلاً app.example.com)"
-    echo -e "     • Tunnel ID (UUID) را کپی کن — برای کلاینت لازم است"
+    echo -e "${GREEN}Step by step:${NC}"
+    echo -e "  ${YELLOW}1) On the public server:${NC} Menu -> 2 -> 4 -> 1 (Server)"
+    echo -e "     - Tunnel port (e.g. 8421)"
+    echo -e "     - Entrypoint port (e.g. 8420) = public-facing port"
+    echo -e "     - Ingress hostname (e.g. app.example.com)"
+    echo -e "     - Copy the Tunnel ID (UUID) for the client"
     echo -e ""
-    echo -e "  ${YELLOW}2) روی سرور پشت NAT:${NC} منو → 2 → 4 → 2 (Client)"
-    echo -e "     • همان Tunnel ID"
-    echo -e "     • آدرس سرور عمومی: IP:8421"
-    echo -e "     • Target محلی: 127.0.0.1:80 (سرویسی که می‌خواهی expose کنی)"
-    echo -e "     • rtcp برای TCP / rudp برای UDP"
+    echo -e "  ${YELLOW}2) On the NAT server:${NC} Menu -> 2 -> 4 -> 2 (Client)"
+    echo -e "     - Same Tunnel ID"
+    echo -e "     - Public server address: IP:8421"
+    echo -e "     - Local target: 127.0.0.1:80 (service to expose)"
+    echo -e "     - rtcp for TCP / rudp for UDP"
     echo -e ""
-    echo -e "  دسترسی از بیرون معمولاً از طریق entrypoint سرور عمومی است."
+    echo -e "  External access is usually via the public server entrypoint."
 }
 
 print_guide_proxy() {
-    echo -e "${CYAN}========== پروکسی تک‌سروره ==========${NC}"
-    echo -e "منو → 2 → 1"
-    echo -e "برای ساخت SOCKS5 / HTTP / Relay / Shadowsocks روی همین ماشین."
+    echo -e "${CYAN}========== Single-Server Proxy ==========${NC}"
+    echo -e "Menu -> 2 -> 1"
+    echo -e "Creates SOCKS5 / HTTP / Relay / Shadowsocks on this machine."
     echo -e ""
-    echo -e "  1) پروتکل را انتخاب کن (مثلاً SOCKS5)"
-    echo -e "  2) پورت listen (مثلاً 1080)"
-    echo -e "  3) Transport listener (معمولاً tcp؛ برای ضد-DPI: tls/wss/mwss)"
-    echo -e "  4) در صورت نیاز auth"
-    echo -e "  5) اگر می‌خواهی ترافیک از پروکسی دیگری رد شود: Attach upstream chain = y"
+    echo -e "  1) Choose protocol (e.g. SOCKS5)"
+    echo -e "  2) Listen port (e.g. 1080)"
+    echo -e "  3) Listener transport (usually tcp; for anti-DPI: tls/wss/mwss)"
+    echo -e "  4) Optional auth"
+    echo -e "  5) To route via another proxy: Attach upstream chain = y"
     echo -e ""
-    echo -e "کلاینت: socks5://IP:1080 یا http://IP:8080"
+    echo -e "Client: socks5://IP:1080 or http://IP:8080"
 }
 
 print_guide_local_forward() {
     echo -e "${CYAN}========== Local Port Forward ==========${NC}"
-    echo -e "منو → 2 → 2"
-    echo -e "پورت محلی را به یک آدرس هدف نگاشت می‌کند."
-    echo -e "  مثال: listen :8080 → 192.168.1.10:80"
-    echo -e "اگر chain بسازی، فوروارد از طریق پروکسی واسط انجام می‌شود."
+    echo -e "Menu -> 2 -> 2"
+    echo -e "Maps a local listen port to a target address."
+    echo -e "  Example: listen :8080 -> 192.168.1.10:80"
+    echo -e "If you attach a chain, forwarding goes through an upstream proxy."
 }
 
 print_guide_transport() {
-    echo -e "${CYAN}========== انتخاب Transport (ضد-DPI) ==========${NC}"
-    echo -e "  ${RED}1 Plain TCP${NC}  — ساده ولی برای DPI راحت‌تر قابل تشخیص"
-    echo -e "  ${YELLOW}2 TLS${NC}       — رمزنگاری، شبیه HTTPS"
-    echo -e "  ${YELLOW}3 WSS${NC}       — WebSocket روی TLS"
-    echo -e "  ${GREEN}4 MWSS${NC}      — پیشنهادی: TLS + WebSocket + multiplex"
-    echo -e "                 چند session روی اتصال کمتر = همبستگی ۱به۱ کمتر"
+    echo -e "${CYAN}========== Transport (anti-DPI) ==========${NC}"
+    echo -e "  ${RED}1 Plain TCP${NC}  - simple, easier for DPI to detect"
+    echo -e "  ${YELLOW}2 TLS${NC}       - encrypted, looks like HTTPS"
+    echo -e "  ${YELLOW}3 WSS${NC}       - WebSocket over TLS"
+    echo -e "  ${GREEN}4 MWSS${NC}      - recommended: TLS + WebSocket + multiplex"
+    echo -e "                 fewer connections = weaker 1:1 flow correlation"
     echo -e ""
-    echo -e "پیشنهاد عملی: ${YELLOW}MWSS + پورت 443${NC} روی هر دو سرور."
-    echo -e "path دو طرف باید یکسان باشد (پیش‌فرض ${YELLOW}/ws${NC})."
+    echo -e "Practical tip: ${YELLOW}MWSS + port 443${NC} on both servers."
+    echo -e "Path must match on both sides (default ${YELLOW}/ws${NC})."
 }
 
 print_guide_other() {
-    echo -e "${CYAN}========== سایر سرویس‌ها ==========${NC}"
-    echo -e "  ${YELLOW}Transparent redirect${NC}: نیاز به iptables/nftables روی لینوکس دارد."
-    echo -e "  ${YELLOW}DNS proxy${NC}: DNS محلی می‌گیری و به upstream (udp/tls/https) می‌فرستی."
-    echo -e "  ${YELLOW}TUN/TAP${NC}: بعد از ساخت سرویس، IP/route روی اینترفیس را خودت تنظیم کن."
-    echo -e "  ${YELLOW}File server${NC}: پوشه را روی یک پورت سرو می‌کند."
+    echo -e "${CYAN}========== Other Services ==========${NC}"
+    echo -e "  ${YELLOW}Transparent redirect${NC}: needs iptables/nftables on Linux."
+    echo -e "  ${YELLOW}DNS proxy${NC}: local DNS listener forwarded to upstream (udp/tls/https)."
+    echo -e "  ${YELLOW}TUN/TAP${NC}: after creating the service, configure IP/routes on the interface."
+    echo -e "  ${YELLOW}File server${NC}: serves a directory on a listen port."
     echo -e ""
-    echo -e "${CYAN}Policies (منو 5):${NC}"
-    echo -e "  Bypass / Admission / Limiter را بساز، بعد به نام سرویس attach کن."
-    echo -e "  API / Metrics برای مانیتورینگ اختیاری است."
+    echo -e "${CYAN}Policies (Menu 5):${NC}"
+    echo -e "  Create Bypass / Admission / Limiter, then attach by service name."
+    echo -e "  API / Metrics are optional for monitoring."
 }
 
 print_guide_troubleshoot() {
-    echo -e "${CYAN}========== عیب‌یابی ==========${NC}"
-    echo -e "  1) منو 4: سرویس ساخته شده؟ Upstream و Target درست است؟"
-    echo -e "  2) منو 6 → Logs: خطای dial/connect/auth را ببین"
-    echo -e "  3) فایروال دو سرور پورت‌ها را باز کرده باشد"
-    echo -e "  4) Transport و path دو سرور یکی باشد"
-    echo -e "  5) روی B اول سرویس upstream بالا باشد، بعد A"
-    echo -e "  6) منو 7: JSON خام را چک کن"
-    echo -e "  7) اگر خراب شد: سرویس را حذف کن (منو 3) و از نو بساز"
+    echo -e "${CYAN}========== Troubleshooting ==========${NC}"
+    echo -e "  1) Menu 4: is the service listed? Are Upstream and Target correct?"
+    echo -e "  2) Menu 7 -> Logs: check dial/connect/auth errors"
+    echo -e "  3) Firewall on both servers must allow the ports"
+    echo -e "  4) Transport and path must match on both servers"
+    echo -e "  5) Upstream on B must be up before A"
+    echo -e "  6) Menu 8: inspect raw JSON config"
+    echo -e "  7) If broken: remove the service (Menu 3) and recreate it"
 }
 
 help_menu() {
     while true; do
-        echo -e "\n${CYAN}========== Help / راهنما ==========${NC}"
-        echo -e "1) Overview — از کجا شروع کنم؟"
-        echo -e "2) Two-server tunnel (Remote Port Forward) ${GREEN}← رایج‌ترین${NC}"
-        echo -e "3) Reverse tunnel (پشت NAT)"
+        echo -e "\n${CYAN}========== Help ==========${NC}"
+        echo -e "1) Overview - where should I start?"
+        echo -e "2) Two-server tunnel (Remote Port Forward) ${GREEN}<- most common${NC}"
+        echo -e "3) Reverse tunnel (behind NAT)"
         echo -e "4) Single-server proxy"
         echo -e "5) Local port forward"
         echo -e "6) Transport / anti-DPI (TLS/WSS/MWSS)"
@@ -1779,9 +1779,9 @@ main_menu() {
         echo -e "4) View Services & Config Summary"
         echo -e "5) Policies (Bypass / Admission / Limiter / API / Metrics)"
         echo -e "6) Manage System Service (Start/Stop/Restart)"
-        echo -e "7) Logs & Diagnostics ${GREEN}← خطاها و عیب‌یابی${NC}"
+        echo -e "7) Logs & Diagnostics ${GREEN}<- errors & troubleshooting${NC}"
         echo -e "8) Show Raw Config JSON"
-        echo -e "9) Help / راهنمای تانل و استفاده"
+        echo -e "9) Help / Tunnel usage guide"
         echo -e "10) Completely Uninstall GOST"
         echo -e "0) Exit"
         echo -e "---------------------------------------------"
@@ -1800,7 +1800,7 @@ main_menu() {
             0|q|Q) echo -e "${GREEN}Thanks for using Wild GOST. Bye!${NC}"; exit 0 ;;
             *) echo -e "${RED}Invalid choice! Enter 0-10.${NC}" ;;
         esac
-        echo -e "\n${YELLOW}Press Enter to return to the main menu (or type 0)...${NC}"
+        echo -e "\n${YELLOW}Press Enter to return to the main menu...${NC}"
         read -r
         clear
     done
