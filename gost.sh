@@ -485,20 +485,32 @@ uninstall_gost() {
     systemctl stop gost &>/dev/null
     systemctl disable gost &>/dev/null
     rm -f /etc/systemd/system/gost.service
+    # Remove the enable symlink defensively in case `systemctl disable` failed
+    rm -f /etc/systemd/system/multi-user.target.wants/gost.service
     systemctl daemon-reload
+    systemctl reset-failed gost &>/dev/null
 
     echo -e "${CYAN}Removing binary and commands...${NC}"
     rm -f /usr/local/bin/gost
     rm -f /usr/local/bin/gost-manage.sh
     rm -f /usr/local/bin/wild
 
+    echo -e "${CYAN}Cleaning up temporary files...${NC}"
+    rm -f /tmp/gost_config_tmp.json
+    rm -rf /tmp/gost_install
+
     read -p "Do you also want to delete the configuration files in /etc/gost? (y/n): " delete_config
     if [ "$delete_config" = "y" ] || [ "$delete_config" = "Y" ]; then
         rm -rf /etc/gost
         echo -e "${GREEN}Configuration files deleted.${NC}"
+    else
+        echo -e "${YELLOW}Configuration kept at /etc/gost (remove manually with: rm -rf /etc/gost).${NC}"
     fi
 
     echo -e "${GREEN}GOST was completely uninstalled.${NC}"
+    # The management script just removed itself from the system path,
+    # so exit instead of returning to the (now stale) menu.
+    exit 0
 }
 
 main_menu() {
