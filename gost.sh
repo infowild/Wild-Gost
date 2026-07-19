@@ -5,23 +5,34 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Check Root User
 if [[ "$EUID" -ne '0' ]]; then
-    echo -e "${RED}خطا: برای اجرای این اسکریپت باید دسترسی root داشته باشید (اجرا به صورت sudo).${NC}"
+    echo -e "${RED}Error: You must run this script as root (use sudo).${NC}"
     exit 1
 fi
 
 show_banner() {
-    echo -e "${CYAN}============================================= ${NC}"
-    echo -e "${GREEN}      اسکریپت مدیریت آسان و تونل‌زنی GOST      ${NC}"
-    echo -e "${CYAN}============================================= ${NC}"
+    echo -e "${MAGENTA}"
+    cat <<'BANNER'
+ __        ___ _     _    ____  ___  ____ _____
+ \ \      / (_) | __| |  / ___|/ _ \/ ___|_   _|
+  \ \ /\ / /| | |/ _` | | |  _| | | \___ \ | |
+   \ V  V / | | | (_| | | |_| | |_| |___) || |
+    \_/\_/  |_|_|\__,_|  \____|\___/|____/ |_|
+BANNER
+    echo -e "${NC}"
+    echo -e "${CYAN}=============================================${NC}"
+    echo -e "${GREEN}    Wild GOST - Easy Tunnel Management       ${NC}"
+    echo -e "${CYAN}  https://github.com/infowild/Wild-Gost      ${NC}"
+    echo -e "${CYAN}=============================================${NC}"
 }
 
 check_dependencies() {
     if ! command -v curl &> /dev/null; then
-        echo -e "${YELLOW}ابزار curl نصب نیست. در حال نصب...${NC}"
+        echo -e "${YELLOW}curl is not installed. Installing...${NC}"
         if command -v apt-get &> /dev/null; then
             apt-get update && apt-get install -y curl
         elif command -v yum &> /dev/null; then
@@ -29,7 +40,7 @@ check_dependencies() {
         fi
     fi
     if ! command -v jq &> /dev/null; then
-        echo -e "${YELLOW}ابزار jq نصب نیست. در حال نصب...${NC}"
+        echo -e "${YELLOW}jq is not installed. Installing...${NC}"
         if command -v apt-get &> /dev/null; then
             apt-get update && apt-get install -y jq
         elif command -v yum &> /dev/null; then
@@ -62,14 +73,14 @@ EOF
 
 install_gost() {
     check_dependencies
-    echo -e "${CYAN}در حال دریافت آخرین نسخه GOST...${NC}"
+    echo -e "${CYAN}Fetching the latest GOST release...${NC}"
     latest_ver=$(curl -s https://api.github.com/repos/go-gost/gost/releases/latest | jq -r .tag_name)
     if [ -z "$latest_ver" ] || [ "$latest_ver" = "null" ]; then
-        echo -e "${RED}خطا در دریافت نسخه جدید از گیت‌هاب.${NC}"
+        echo -e "${RED}Failed to fetch the latest version from GitHub.${NC}"
         return 1
     fi
-    echo -e "${GREEN}آخرین نسخه یافت شد: $latest_ver${NC}"
-    
+    echo -e "${GREEN}Latest version found: $latest_ver${NC}"
+
     arch=$(uname -m)
     os="linux"
     cpu_arch=""
@@ -78,82 +89,81 @@ install_gost() {
         aarch64|arm64) cpu_arch="arm64" ;;
         i686|i386) cpu_arch="386" ;;
         armv7*) cpu_arch="armv7" ;;
-        *) echo -e "${RED}معماری سیستم شما پشتیبانی نمی‌شود: $arch${NC}"; return 1 ;;
+        *) echo -e "${RED}Unsupported CPU architecture: $arch${NC}"; return 1 ;;
     esac
-    
+
     download_url=$(curl -s https://api.github.com/repos/go-gost/gost/releases/latest | jq -r ".assets[] | select(.name | contains(\"${os}\") and contains(\"${cpu_arch}\")) | .browser_download_url" | head -n 1)
-    
+
     if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
-        echo -e "${RED}فایل دانلودی مناسب برای معماری شما پیدا نشد.${NC}"
+        echo -e "${RED}No suitable download found for your architecture.${NC}"
         return 1
     fi
-    
-    echo -e "${CYAN}در حال دانلود از: $download_url${NC}"
+
+    echo -e "${CYAN}Downloading from: $download_url${NC}"
     mkdir -p /tmp/gost_install
     curl -L "$download_url" -o /tmp/gost_install/gost.tar.gz
     tar -xzf /tmp/gost_install/gost.tar.gz -C /tmp/gost_install
     mv /tmp/gost_install/gost /usr/local/bin/gost
     chmod +x /usr/local/bin/gost
     rm -rf /tmp/gost_install
-    
+
     # Init config
     mkdir -p /etc/gost
     if [ ! -f /etc/gost/config.json ]; then
         echo '{"services":[],"chains":[],"log":{"level":"info"}}' > /etc/gost/config.json
     fi
-    
+
     # Setup service
     create_systemd_service
-    
+
     # Copy this script to system path
     cp "$0" /usr/local/bin/gost-manage.sh
     chmod +x /usr/local/bin/gost-manage.sh
-    
+
     # Create the wrapper script 'wild'
     cat <<'EOF' > /usr/local/bin/wild
 #!/usr/bin/env bash
 if [ "$1" = "gost" ]; then
     /usr/local/bin/gost-manage.sh
 else
-    echo "دستور ناشناخته. آیا منظورتان 'wild gost' بود؟"
     echo "Unknown command. Did you mean 'wild gost'?"
 fi
 EOF
     chmod +x /usr/local/bin/wild
 
-    echo -e "${GREEN}نصب GOST با موفقیت انجام شد! نسخه: $latest_ver${NC}"
-    echo -e "${GREEN}از این پس می‌توانید با تایپ دستور ${YELLOW}wild gost${GREEN} به این منو دسترسی داشته باشید.${NC}"
+    echo -e "${GREEN}GOST installed successfully! Version: $latest_ver${NC}"
+    echo -e "${GREEN}From now on you can open this menu anytime by typing ${YELLOW}wild gost${GREEN}.${NC}"
     /usr/local/bin/gost -V
 }
 
 add_tunnel() {
     if [ ! -f /usr/local/bin/gost ]; then
-        echo -e "${RED}برنامه GOST نصب نیست. ابتدا گزینه 1 را برای نصب انتخاب کنید.${NC}"
+        echo -e "${RED}GOST is not installed. Choose option 1 to install it first.${NC}"
         return 1
     fi
-    
-    echo -e "${CYAN}--- افزودن تونل جدید ---${NC}"
-    read -p "پورت گوش دادن (مثلا 1080): " port
+
+    echo -e "${CYAN}--- Add New Tunnel ---${NC}"
+    read -p "Listening port (e.g. 1080): " port
     if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-        echo -e "${RED}پورت نامعتبر است!${NC}"
+        echo -e "${RED}Invalid port!${NC}"
         return 1
     fi
-    
+
     port_exists=$(jq --arg port ":$port" '.services[]? | select(.addr == $port) | .name' /etc/gost/config.json)
     if [ -n "$port_exists" ]; then
-        echo -e "${RED}این پورت قبلاً در تنظیمات استفاده شده است!${NC}"
+        echo -e "${RED}This port is already used in the configuration!${NC}"
         return 1
     fi
-    
-    echo -e "نوع پروتکل ورودی را انتخاب کنید:"
+
+    echo -e "Select the inbound protocol type:"
     echo -e "1) SOCKS5"
     echo -e "2) HTTP"
     echo -e "3) Relay Server"
     echo -e "4) TCP Port Forwarding"
     echo -e "5) UDP Port Forwarding"
     echo -e "6) Shadowsocks (SS)"
-    read -p "انتخاب شما (1-6): " proto_choice
-    
+    read -p "Your choice (1-6): " proto_choice
+
     local name="service-$port"
     local handler_type=""
     local listener_type="tcp"
@@ -166,76 +176,76 @@ add_tunnel() {
     local has_upstream="n"
     local upstream_node=""
     local chain_name=""
-    
+
     case $proto_choice in
         1)
             handler_type="socks5"
-            read -p "آیا احراز هویت (نام کاربری/رمز عبور) نیاز است؟ (y/n): " has_auth
+            read -p "Enable authentication (username/password)? (y/n): " has_auth
             ;;
         2)
             handler_type="http"
-            read -p "آیا احراز هویت (نام کاربری/رمز عبور) نیاز است؟ (y/n): " has_auth
+            read -p "Enable authentication (username/password)? (y/n): " has_auth
             ;;
         3)
             handler_type="relay"
-            read -p "آیا احراز هویت (نام کاربری/رمز عبور) نیاز است? (y/n): " has_auth
+            read -p "Enable authentication (username/password)? (y/n): " has_auth
             ;;
         4)
             handler_type="tcp"
-            read -p "آدرس مقصد برای فوروارد (مثلا 127.0.0.1:80 یا google.com:443): " forward_target
+            read -p "Forward target address (e.g. 127.0.0.1:80 or google.com:443): " forward_target
             if [ -z "$forward_target" ]; then
-                echo -e "${RED}آدرس مقصد نمی‌تواند خالی باشد!${NC}"
+                echo -e "${RED}Target address cannot be empty!${NC}"
                 return 1
             fi
             ;;
         5)
             handler_type="udp"
             listener_type="udp"
-            read -p "آدرس مقصد برای فوروارد (مثلا 127.0.0.1:53): " forward_target
+            read -p "Forward target address (e.g. 127.0.0.1:53): " forward_target
             if [ -z "$forward_target" ]; then
-                echo -e "${RED}آدرس مقصد نمی‌تواند خالی باشد!${NC}"
+                echo -e "${RED}Target address cannot be empty!${NC}"
                 return 1
             fi
             ;;
         6)
             handler_type="ss"
-            read -p "نوع رمزنگاری Shadowsocks (پیش‌فرض aes-256-gcm): " ss_method
+            read -p "Shadowsocks encryption method (default aes-256-gcm): " ss_method
             [ -z "$ss_method" ] && ss_method="aes-256-gcm"
-            read -p "رمز عبور Shadowsocks: " ss_password
+            read -p "Shadowsocks password: " ss_password
             if [ -z "$ss_password" ]; then
-                echo -e "${RED}رمز عبور نمی‌تواند خالی باشد!${NC}"
+                echo -e "${RED}Password cannot be empty!${NC}"
                 return 1
             fi
             ;;
         *)
-            echo -e "${RED}انتخاب نامعتبر!${NC}"
+            echo -e "${RED}Invalid choice!${NC}"
             return 1
             ;;
     esac
-    
+
     if [ "$has_auth" = "y" ] || [ "$has_auth" = "Y" ]; then
-        read -p "نام کاربری: " username
-        read -p "رمز عبور: " password
+        read -p "Username: " username
+        read -p "Password: " password
         if [ -z "$username" ] || [ -z "$password" ]; then
-            echo -e "${RED}نام کاربری و رمز عبور نمی‌توانند خالی باشند!${NC}"
+            echo -e "${RED}Username and password cannot be empty!${NC}"
             return 1
         fi
     fi
-    
+
     if [ "$proto_choice" -eq 1 ] || [ "$proto_choice" -eq 2 ] || [ "$proto_choice" -eq 3 ]; then
-        read -p "آیا تمایل دارید ترافیک را از یک پروکسی بالادستی (Upstream Chain) عبور دهید؟ (y/n): " has_upstream
+        read -p "Route traffic through an upstream proxy chain? (y/n): " has_upstream
         if [ "$has_upstream" = "y" ] || [ "$has_upstream" = "Y" ]; then
-            read -p "آدرس پروکسی بالادستی (مثال: socks5://1.2.3.4:1080 یا relay+tls://5.6.7.8:8443): " upstream_node
+            read -p "Upstream proxy address (e.g. socks5://1.2.3.4:1080 or relay+tls://5.6.7.8:8443): " upstream_node
             if [ -z "$upstream_node" ]; then
-                echo -e "${RED}آدرس پروکسی بالادستی نمی‌تواند خالی باشد!${NC}"
+                echo -e "${RED}Upstream proxy address cannot be empty!${NC}"
                 return 1
             fi
             chain_name="chain-$port"
         fi
     fi
-    
+
     local new_service_json=""
-    
+
     if [ "$handler_type" = "socks5" ] || [ "$handler_type" = "http" ] || [ "$handler_type" = "relay" ]; then
         if [ -n "$username" ] && [ -n "$password" ]; then
             new_service_json=$(jq -n \
@@ -254,11 +264,11 @@ add_tunnel() {
                 --arg listener "$listener_type" \
                 '{name: $name, addr: $addr, handler: {type: $handler}, listener: {type: $listener}}')
         fi
-        
+
         if [ -n "$chain_name" ]; then
             new_service_json=$(echo "$new_service_json" | jq --arg chain "$chain_name" '.handler += {chain: $chain}')
         fi
-        
+
     elif [ "$handler_type" = "tcp" ] || [ "$handler_type" = "udp" ]; then
         new_service_json=$(jq -n \
             --arg name "$name" \
@@ -267,7 +277,7 @@ add_tunnel() {
             --arg listener "$listener_type" \
             --arg target "$forward_target" \
             '{name: $name, addr: $addr, handler: {type: $handler}, listener: {type: $listener}, forwarder: {nodes: [{name: ("target-" + $port), addr: $target}]}}')
-            
+
     elif [ "$handler_type" = "ss" ]; then
         new_service_json=$(jq -n \
             --arg name "$name" \
@@ -277,85 +287,85 @@ add_tunnel() {
             --arg listener "$listener_type" \
             '{name: $name, addr: $addr, handler: {type: "ss", metadata: {method: $method, password: $password}}, listener: {type: $listener}}')
     fi
-    
+
     jq --argjson new_svc "$new_service_json" '.services += [$new_svc]' /etc/gost/config.json > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json /etc/gost/config.json
-    
+
     if [ -n "$chain_name" ] && [ -n "$upstream_node" ]; then
         local new_chain_json=$(jq -n \
             --arg name "$chain_name" \
             --arg node_addr "$upstream_node" \
             '{name: $name, hops: [{name: "hop-0", nodes: [{name: "node-0", addr: $node_addr}]}]}')
-            
+
         jq --argjson new_ch "$new_chain_json" '.chains += [$new_ch]' /etc/gost/config.json > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json /etc/gost/config.json
     fi
-    
+
     systemctl restart gost
-    echo -e "${GREEN}تونل با موفقیت اضافه و راه‌اندازی شد!${NC}"
+    echo -e "${GREEN}Tunnel added and started successfully!${NC}"
 }
 
 delete_tunnel() {
     if [ ! -f /usr/local/bin/gost ]; then
-        echo -e "${RED}برنامه GOST نصب نیست.${NC}"
+        echo -e "${RED}GOST is not installed.${NC}"
         return 1
     fi
-    
-    echo -e "${CYAN}--- حذف تونل ---${NC}"
+
+    echo -e "${CYAN}--- Remove Tunnel ---${NC}"
     services_count=$(jq '.services | length' /etc/gost/config.json)
     if [ "$services_count" -eq 0 ]; then
-        echo -e "${YELLOW}هیچ تونلی پیکربندی نشده است.${NC}"
+        echo -e "${YELLOW}No tunnels are configured.${NC}"
         return 0
     fi
-    
-    echo -e "تونل مورد نظر برای حذف را انتخاب کنید:"
+
+    echo -e "Select the tunnel to remove:"
     for ((i=0; i<services_count; i++)); do
         name=$(jq -r ".services[$i].name" /etc/gost/config.json)
         addr=$(jq -r ".services[$i].addr" /etc/gost/config.json)
         type=$(jq -r ".services[$i].handler.type" /etc/gost/config.json)
-        echo -e "$((i+1)) ) نام: $name | پورت: $addr | نوع: $type"
+        echo -e "$((i+1)) ) Name: $name | Port: $addr | Type: $type"
     done
-    
-    read -p "شماره تونل (1-$services_count): " choice
+
+    read -p "Tunnel number (1-$services_count): " choice
     if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "$services_count" ]; then
-        echo -e "${RED}شماره نامعتبر است!${NC}"
+        echo -e "${RED}Invalid number!${NC}"
         return 1
     fi
-    
+
     index=$((choice-1))
     service_name=$(jq -r ".services[$index].name" /etc/gost/config.json)
     associated_chain=$(jq -r ".services[$index].handler.chain // empty" /etc/gost/config.json)
-    
+
     jq --arg name "$service_name" '.services |= map(select(.name != $name))' /etc/gost/config.json > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json /etc/gost/config.json
-    
+
     if [ -n "$associated_chain" ]; then
         jq --arg chain "$associated_chain" '.chains |= map(select(.name != $chain))' /etc/gost/config.json > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json /etc/gost/config.json
     fi
-    
+
     systemctl restart gost
-    echo -e "${GREEN}تونل $service_name با موفقیت حذف شد.${NC}"
+    echo -e "${GREEN}Tunnel $service_name removed successfully.${NC}"
 }
 
 list_tunnels() {
     if [ ! -f /usr/local/bin/gost ]; then
-        echo -e "${RED}برنامه GOST نصب نیست.${NC}"
+        echo -e "${RED}GOST is not installed.${NC}"
         return 1
     fi
-    
-    echo -e "${CYAN}--- لیست تونل‌های فعال ---${NC}"
+
+    echo -e "${CYAN}--- Active Tunnels ---${NC}"
     services_count=$(jq '.services | length' /etc/gost/config.json)
     if [ "$services_count" -eq 0 ]; then
-        echo -e "${YELLOW}هیچ تونلی ثبت نشده است.${NC}"
+        echo -e "${YELLOW}No tunnels are registered.${NC}"
         return 0
     fi
-    
+
     echo -e "-------------------------------------------------------------------------------"
-    printf "%-5s | %-20s | %-12s | %-12s | %-20s\n" "ردیف" "نام سرویس" "پورت ورودی" "پروتکل" "پروکسی بالادست"
+    printf "%-5s | %-20s | %-12s | %-12s | %-20s\n" "No." "Service Name" "Listen Port" "Protocol" "Upstream Proxy"
     echo -e "-------------------------------------------------------------------------------"
     for ((i=0; i<services_count; i++)); do
         name=$(jq -r ".services[$i].name" /etc/gost/config.json)
         addr=$(jq -r ".services[$i].addr" /etc/gost/config.json)
         type=$(jq -r ".services[$i].handler.type" /etc/gost/config.json)
-        chain=$(jq -r ".services[$i].handler.chain // \"ندارد\"" /etc/gost/config.json)
-        if [ "$chain" != "ندارد" ]; then
+        chain=$(jq -r ".services[$i].handler.chain // \"none\"" /etc/gost/config.json)
+        if [ "$chain" != "none" ]; then
             chain_addr=$(jq -r --arg ch "$chain" '.chains[]? | select(.name == $ch) | .hops[0].nodes[0].addr' /etc/gost/config.json)
             chain="$chain_addr"
         fi
@@ -366,75 +376,75 @@ list_tunnels() {
 
 manage_service() {
     if [ ! -f /usr/local/bin/gost ]; then
-        echo -e "${RED}برنامه GOST نصب نیست.${NC}"
+        echo -e "${RED}GOST is not installed.${NC}"
         return 1
     fi
-    
+
     while true; do
-        echo -e "\n${CYAN}--- مدیریت وضعیت سرویس سیستم ---${NC}"
-        echo -e "1) نمایش وضعیت سرویس (Status)"
-        echo -e "2) شروع سرویس (Start)"
-        echo -e "3) توقف سرویس (Stop)"
-        echo -e "4) راه‌اندازی مجدد سرویس (Restart)"
-        echo -e "5) مشاهده لاگ‌های سرویس (Logs)"
-        echo -e "6) بازگشت به منوی اصلی"
-        read -p "انتخاب شما (1-6): " s_choice
-        
+        echo -e "\n${CYAN}--- System Service Management ---${NC}"
+        echo -e "1) Show service status (Status)"
+        echo -e "2) Start service (Start)"
+        echo -e "3) Stop service (Stop)"
+        echo -e "4) Restart service (Restart)"
+        echo -e "5) View service logs (Logs)"
+        echo -e "6) Back to main menu"
+        read -p "Your choice (1-6): " s_choice
+
         case $s_choice in
             1)
                 systemctl status gost
                 ;;
             2)
                 systemctl start gost
-                echo -e "${GREEN}سرویس شروع به کار کرد.${NC}"
+                echo -e "${GREEN}Service started.${NC}"
                 ;;
             3)
                 systemctl stop gost
-                echo -e "${RED}سرویس متوقف شد.${NC}"
+                echo -e "${RED}Service stopped.${NC}"
                 ;;
             4)
                 systemctl restart gost
-                echo -e "${GREEN}سرویس مجدداً راه‌اندازی شد.${NC}"
+                echo -e "${GREEN}Service restarted.${NC}"
                 ;;
             5)
-                echo -e "${CYAN}در حال نمایش لاگ‌های سرویس (برای خروج Ctrl+C را بزنید)...${NC}"
+                echo -e "${CYAN}Showing service logs (press Ctrl+C to exit)...${NC}"
                 journalctl -u gost -n 50 -f
                 ;;
             6)
                 break
                 ;;
             *)
-                echo -e "${RED}انتخاب نامعتبر!${NC}"
+                echo -e "${RED}Invalid choice!${NC}"
                 ;;
         esac
     done
 }
 
 uninstall_gost() {
-    read -p "آیا از حذف کامل GOST مطمئن هستید؟ (y/n): " confirm
+    read -p "Are you sure you want to completely uninstall GOST? (y/n): " confirm
     if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-        echo -e "${YELLOW}انصراف از حذف.${NC}"
+        echo -e "${YELLOW}Uninstall cancelled.${NC}"
         return 0
     fi
-    
-    echo -e "${CYAN}در حال توقف و غیرفعال‌سازی سرویس...${NC}"
+
+    echo -e "${CYAN}Stopping and disabling the service...${NC}"
     systemctl stop gost &>/dev/null
     systemctl disable gost &>/dev/null
     rm -f /etc/systemd/system/gost.service
     systemctl daemon-reload
-    
-    echo -e "${CYAN}در حال حذف فایل باینری و دستورات...${NC}"
+
+    echo -e "${CYAN}Removing binary and commands...${NC}"
     rm -f /usr/local/bin/gost
     rm -f /usr/local/bin/gost-manage.sh
     rm -f /usr/local/bin/wild
-    
-    read -p "آیا می‌خواهید فایل‌های پیکربندی در /etc/gost نیز حذف شوند؟ (y/n): " delete_config
+
+    read -p "Do you also want to delete the configuration files in /etc/gost? (y/n): " delete_config
     if [ "$delete_config" = "y" ] || [ "$delete_config" = "Y" ]; then
         rm -rf /etc/gost
-        echo -e "${GREEN}فایل‌های تنظیمات حذف شدند.${NC}"
+        echo -e "${GREEN}Configuration files deleted.${NC}"
     fi
-    
-    echo -e "${GREEN}حذف کامل GOST با موفقیت انجام شد.${NC}"
+
+    echo -e "${GREEN}GOST was completely uninstalled.${NC}"
 }
 
 main_menu() {
@@ -443,24 +453,24 @@ main_menu() {
         if [ -f /usr/local/bin/gost ]; then
             status_line=$(systemctl is-active gost 2>/dev/null)
             if [ "$status_line" = "active" ]; then
-                echo -e "وضعیت نرم‌افزار: ${GREEN}نصب شده و فعال (Running)${NC}"
+                echo -e "Software status: ${GREEN}Installed & Active (Running)${NC}"
             else
-                echo -e "وضعیت نرم‌افزار: ${YELLOW}نصب شده ولی غیرفعال (Stopped)${NC}"
+                echo -e "Software status: ${YELLOW}Installed but Inactive (Stopped)${NC}"
             fi
         else
-            echo -e "وضعیت نرم‌افزار: ${RED}نصب نشده است${NC}"
+            echo -e "Software status: ${RED}Not Installed${NC}"
         fi
         echo -e "---------------------------------------------"
-        echo -e "1) نصب یا بروزرسانی GOST (آخرین نسخه)"
-        echo -e "2) افزودن یک تونل جدید"
-        echo -e "3) حذف یک تونل موجود"
-        echo -e "4) مشاهده لیست تونل‌های فعال"
-        echo -e "5) مدیریت سرویس سیستم (Start / Stop / Restart / Logs)"
-        echo -e "6) حذف کامل GOST از روی سرور"
-        echo -e "7) خروج"
+        echo -e "1) Install or Update GOST (Latest Version)"
+        echo -e "2) Add a New Tunnel"
+        echo -e "3) Remove an Existing Tunnel"
+        echo -e "4) View Active Tunnels List"
+        echo -e "5) Manage System Service (Start / Stop / Restart / Logs)"
+        echo -e "6) Completely Uninstall GOST"
+        echo -e "7) Exit"
         echo -e "---------------------------------------------"
-        read -p "گزینه مورد نظر خود را وارد کنید (1-7): " choice
-        
+        read -p "Enter your choice (1-7): " choice
+
         case $choice in
             1)
                 install_gost
@@ -481,14 +491,14 @@ main_menu() {
                 uninstall_gost
                 ;;
             7)
-                echo -e "${GREEN}با تشکر از استفاده شما. خروج.${NC}"
+                echo -e "${GREEN}Thanks for using Wild GOST. Bye!${NC}"
                 exit 0
                 ;;
             *)
-                echo -e "${RED}انتخاب نامعتبر! لطفا عددی بین 1 تا 7 وارد کنید.${NC}"
+                echo -e "${RED}Invalid choice! Please enter a number between 1 and 7.${NC}"
                 ;;
         esac
-        echo -e "\nبرای بازگشت به منو دکمه Enter را فشار دهید..."
+        echo -e "\nPress Enter to return to the menu..."
         read -r
         clear
     done

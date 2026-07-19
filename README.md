@@ -37,18 +37,25 @@ sudo wild gost
 ### نمای منوی اسکریپت
 
 ```text
+ __        ___ _     _    ____  ___  ____ _____
+ \ \      / (_) | __| |  / ___|/ _ \/ ___|_   _|
+  \ \ /\ / /| | |/ _` | | |  _| | | \___ \ | |
+   \ V  V / | | | (_| | | |_| | |_| |___) || |
+    \_/\_/  |_|_|\__,_|  \____|\___/|____/ |_|
+
 =============================================
-      اسکریپت مدیریت آسان و تونل‌زنی GOST
+    Wild GOST - Easy Tunnel Management
+  https://github.com/infowild/Wild-Gost
 =============================================
-وضعیت نرم‌افزار: نصب شده و فعال (Running)
+Software status: Installed & Active (Running)
 ---------------------------------------------
-1) نصب یا بروزرسانی GOST (آخرین نسخه)
-2) افزودن یک تونل جدید
-3) حذف یک تونل موجود
-4) مشاهده لیست تونل‌های فعال
-5) مدیریت سرویس سیستم (Start / Stop / Restart / Logs)
-6) حذف کامل GOST از روی سرور
-7) خروج
+1) Install or Update GOST (Latest Version)
+2) Add a New Tunnel
+3) Remove an Existing Tunnel
+4) View Active Tunnels List
+5) Manage System Service (Start / Stop / Restart / Logs)
+6) Completely Uninstall GOST
+7) Exit
 ---------------------------------------------
 ```
 
@@ -174,10 +181,17 @@ sudo wild gost
 ### Script Menu Preview
 
 ```text
+ __        ___ _     _    ____  ___  ____ _____
+ \ \      / (_) | __| |  / ___|/ _ \/ ___|_   _|
+  \ \ /\ / /| | |/ _` | | |  _| | | \___ \ | |
+   \ V  V / | | | (_| | | |_| | |_| |___) || |
+    \_/\_/  |_|_|\__,_|  \____|\___/|____/ |_|
+
 =============================================
-      GOST Easy Tunnel Management Script
+    Wild GOST - Easy Tunnel Management
+  https://github.com/infowild/Wild-Gost
 =============================================
-Software Status: Installed & Active (Running)
+Software status: Installed & Active (Running)
 ---------------------------------------------
 1) Install or Update GOST (Latest Version)
 2) Add a New Tunnel
