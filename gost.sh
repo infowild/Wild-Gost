@@ -8,6 +8,10 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
+# Default: direct GitHub access (no mirror prefix).
+# Overridden by select_server_location when Iran mode is chosen.
+GH_MIRRORS=("")
+
 # Check Root User
 if [[ "$EUID" -ne '0' ]]; then
     echo -e "${RED}Error: You must run this script as root (use sudo).${NC}"
@@ -71,38 +75,80 @@ EOF
     systemctl start gost
 }
 
+select_server_location() {
+    echo -e "${CYAN}Where is this server located?${NC}"
+    echo -e "1) Outside Iran (direct GitHub access)"
+    echo -e "2) Iran (download through a GitHub mirror/proxy)"
+    read -p "Your choice (1-2) [default: 1]: " loc_choice
+    if [ "$loc_choice" = "2" ]; then
+        # Mirror prefixes are tried in order until one works
+        GH_MIRRORS=("https://gh-proxy.com/" "https://ghproxy.net/" "https://mirror.ghproxy.com/" "")
+        echo -e "${YELLOW}Iran mode enabled: GitHub mirrors will be used for downloads.${NC}"
+    else
+        GH_MIRRORS=("")
+    fi
+}
+
+# Fetch a URL, trying each mirror prefix until one succeeds
+fetch_url() {
+    local url="$1" output="$2" prefix
+    for prefix in "${GH_MIRRORS[@]}"; do
+        if [ -n "$output" ]; then
+            curl -fL --connect-timeout 15 "${prefix}${url}" -o "$output" 2>/dev/null && return 0
+        else
+            curl -fsSL --connect-timeout 15 "${prefix}${url}" 2>/dev/null && return 0
+        fi
+    done
+    return 1
+}
+
 install_gost() {
     check_dependencies
-    echo -e "${CYAN}Fetching the latest GOST release...${NC}"
-    latest_ver=$(curl -s https://api.github.com/repos/go-gost/gost/releases/latest | jq -r .tag_name)
+    select_server_location
+    echo -e "${CYAN}Fetching the latest GOST release info...${NC}"
+    release_json=$(fetch_url "https://api.github.com/repos/go-gost/gost/releases/latest")
+    latest_ver=$(echo "$release_json" | jq -r .tag_name 2>/dev/null)
     if [ -z "$latest_ver" ] || [ "$latest_ver" = "null" ]; then
         echo -e "${RED}Failed to fetch the latest version from GitHub.${NC}"
+        echo -e "${YELLOW}If you are on an Iranian server, re-run and choose option 2 (Iran) for mirror downloads.${NC}"
         return 1
     fi
     echo -e "${GREEN}Latest version found: $latest_ver${NC}"
 
     arch=$(uname -m)
-    os="linux"
     cpu_arch=""
     case $arch in
         x86_64) cpu_arch="amd64" ;;
         aarch64|arm64) cpu_arch="arm64" ;;
         i686|i386) cpu_arch="386" ;;
         armv7*) cpu_arch="armv7" ;;
+        armv6*) cpu_arch="armv6" ;;
+        armv5*) cpu_arch="armv5" ;;
+        riscv64) cpu_arch="riscv64" ;;
         *) echo -e "${RED}Unsupported CPU architecture: $arch${NC}"; return 1 ;;
     esac
 
-    download_url=$(curl -s https://api.github.com/repos/go-gost/gost/releases/latest | jq -r ".assets[] | select(.name | contains(\"${os}\") and contains(\"${cpu_arch}\")) | .browser_download_url" | head -n 1)
+    # Exact-match the release asset (avoids amd64 accidentally matching amd64v3, etc.)
+    download_url=$(echo "$release_json" | jq -r --arg cpu "$cpu_arch" \
+        '.assets[] | select(.name | test("_linux_" + $cpu + "\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
 
     if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
         echo -e "${RED}No suitable download found for your architecture.${NC}"
         return 1
     fi
 
-    echo -e "${CYAN}Downloading from: $download_url${NC}"
+    echo -e "${CYAN}Downloading: $download_url${NC}"
     mkdir -p /tmp/gost_install
-    curl -L "$download_url" -o /tmp/gost_install/gost.tar.gz
-    tar -xzf /tmp/gost_install/gost.tar.gz -C /tmp/gost_install
+    if ! fetch_url "$download_url" /tmp/gost_install/gost.tar.gz; then
+        echo -e "${RED}Download failed. Check your network access to GitHub (or its mirrors).${NC}"
+        rm -rf /tmp/gost_install
+        return 1
+    fi
+    if ! tar -xzf /tmp/gost_install/gost.tar.gz -C /tmp/gost_install; then
+        echo -e "${RED}Failed to extract the downloaded archive.${NC}"
+        rm -rf /tmp/gost_install
+        return 1
+    fi
     mv /tmp/gost_install/gost /usr/local/bin/gost
     chmod +x /usr/local/bin/gost
     rm -rf /tmp/gost_install
@@ -116,8 +162,15 @@ install_gost() {
     # Setup service
     create_systemd_service
 
-    # Copy this script to system path
-    cp "$0" /usr/local/bin/gost-manage.sh
+    # Install/refresh the management script in the system path.
+    # $0 is not a regular file when run via `bash <(curl ...)`, so fall back
+    # to downloading a fresh copy from the repository (self-update).
+    if [ -f "$0" ] && [ "$0" != "/usr/local/bin/gost-manage.sh" ]; then
+        cp "$0" /usr/local/bin/gost-manage.sh
+    else
+        fetch_url "https://raw.githubusercontent.com/infowild/Wild-Gost/master/gost.sh" /usr/local/bin/gost-manage.sh \
+            || echo -e "${YELLOW}Warning: could not refresh the management script from GitHub.${NC}"
+    fi
     chmod +x /usr/local/bin/gost-manage.sh
 
     # Create the wrapper script 'wild'
@@ -273,6 +326,7 @@ add_tunnel() {
         new_service_json=$(jq -n \
             --arg name "$name" \
             --arg addr ":$port" \
+            --arg port "$port" \
             --arg handler "$handler_type" \
             --arg listener "$listener_type" \
             --arg target "$forward_target" \
