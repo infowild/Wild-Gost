@@ -7,6 +7,9 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 CONFIG_FILE="/etc/gost/config.json"
@@ -27,19 +30,36 @@ if [[ "$EUID" -ne '0' ]]; then
 fi
 
 show_banner() {
-    echo -e "${MAGENTA}"
-    cat <<'BANNER'
- __        ___ _     _    ____  ___  ____ _____
- \ \      / (_) | __| |  / ___|/ _ \/ ___|_   _|
-  \ \ /\ / /| | |/ _` | | |  _| | | \___ \ | |
-   \ V  V / | | | (_| | | |_| | |_| |___) || |
-    \_/\_/  |_|_|\__,_|  \____|\___/|____/ |_|
-BANNER
-    echo -e "${NC}"
-    echo -e "${CYAN}=============================================${NC}"
-    echo -e "${GREEN}    Wild GOST - Easy Tunnel Management       ${NC}"
-    echo -e "${CYAN}  https://github.com/infowild/Wild-Gost      ${NC}"
-    echo -e "${CYAN}=============================================${NC}"
+    local ver=""
+    if [ -x /usr/local/bin/gost ]; then
+        ver=$(/usr/local/bin/gost -V 2>/dev/null | head -n1 | tr -d '\r' | cut -c1-48)
+    fi
+    echo ""
+    echo -e "${CYAN}  ╭──────────────────────────────────────────────────────╮${NC}"
+    echo -e "${CYAN}  │${NC}                                                      ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${BOLD}${MAGENTA}██╗    ██╗██╗██╗     ██████╗${NC}                     ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${BOLD}${MAGENTA}██║    ██║██║██║     ██╔══██╗${NC}                    ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${BOLD}${MAGENTA}██║ █╗ ██║██║██║     ██║  ██║${NC}                    ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${BOLD}${MAGENTA}██║███╗██║██║██║     ██║  ██║${NC}                    ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${BOLD}${MAGENTA}╚███╔███╔╝██║███████╗██████╔╝${NC}                    ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}    ${BOLD}${MAGENTA}╚══╝╚══╝ ╚═╝╚══════╝╚═════╝${NC}                     ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}                                                      ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}      ${BOLD}${GREEN}██████╗  ██████╗ ███████╗████████╗${NC}            ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}     ${BOLD}${GREEN}██╔════╝ ██╔═══██╗██╔════╝╚══██╔══╝${NC}            ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}     ${BOLD}${GREEN}██║  ███╗██║   ██║███████╗   ██║${NC}               ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}     ${BOLD}${GREEN}██║   ██║██║   ██║╚════██║   ██║${NC}               ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}     ${BOLD}${GREEN}╚██████╔╝╚██████╔╝███████║   ██║${NC}               ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}      ${BOLD}${GREEN}╚═════╝  ╚═════╝ ╚══════╝   ╚═╝${NC}               ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}                                                      ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${YELLOW}${BOLD}◆${NC} ${BOLD}Easy Tunnel Management${NC}                           ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${DIM}GOST v3  ·  Multi-port  ·  Multi-location${NC}         ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${DIM}github.com/infowild/Wild-Gost${NC}                     ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}                                                      ${CYAN}│${NC}"
+    echo -e "${CYAN}  ╰──────────────────────────────────────────────────────╯${NC}"
+    if [ -n "$ver" ]; then
+        echo -e "  ${BLUE}${ver}${NC}"
+    fi
+    echo ""
 }
 
 require_gost() {
