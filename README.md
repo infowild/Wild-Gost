@@ -56,13 +56,14 @@ sudo wild gost
 **منوی Add (`2`):**
 
 ```text
-1) Upstream (Server B)
-2) Entry single (Server A)
-3) Entry multi-port / multi-location (Server A)
-4) Proxy (SOCKS/HTTP/SS/...)
-5) Local port forward
-6) Reverse tunnel
-7) More (DNS/TUN/File/Redirect)
+1) Anti-Filter          ← پیشنهادی برای فیلترینگ (ریورس ایران)
+2) Upstream (Server B)
+3) Entry single (Server A)
+4) Entry multi-port / multi-location (Server A)
+5) Proxy (SOCKS/HTTP/SS/...)
+6) Local port forward
+7) Reverse tunnel (generic)
+8) More (DNS/TUN/File/Redirect)
 0) Back
 ```
 
@@ -72,10 +73,12 @@ sudo wild gost
 |:---|:---|
 | 🔧 نصب و بروزرسانی خودکار | شناسایی معماری و دانلود آخرین نسخه پایدار |
 | ⚙️ یکپارچه‌سازی با Systemd | Start / Stop / Restart |
+| 🛡️ **Anti-Filter** | پنل ریورس ایران + نود خارج + چندنود با SNI + سایت فیک |
 | ➕ تونل دو سرور | Upstream (B) + Entry تک‌پورت یا Multi-Port/Location |
 | 🏷️ نام دلخواه | برای هر کانفیگ / لوکیشن |
 | ✏️ Edit | ویرایش سرویس، chain، upstream، target، transport، policies |
-| 🛡️ Transport ضد-DPI | TLS / WSS / MWSS |
+| 🛡️ Transport ضد-DPI | MWSS / WSS / TLS / uTLS / otls / KCP / QUIC / gRPC |
+| 🎭 Decoy | سایت فیک + probeResist |
 | 🔐 احراز هویت | Username/Password |
 | 📋 مدیریت JSON با `jq` | ویرایش امن کانفیگ |
 | 📜 Logs | Live / Errors / Export / Validate |
@@ -94,17 +97,45 @@ sudo wild gost
 
 از این به بعد با همان دستور وارد پنل می‌شوید. راهنمای کامل در همین README است (دیگر منوی Help داخل اسکریپت نیست).
 
+#### ۰) Anti-Filter — تونل ریورس ضد فیلتر (پیشنهادی)
+
+برای عبور از فیلترینگ ایران: نود خارج به ایران وصل می‌شود (ریورس). کاربر فقط دامنه/IP ایران را می‌بیند؛ IP خارج عمومی نیست.
+
+```text
+کاربر ──SNI/Host──► ایران :443 (entrypoint)
+                        │
+                   ingress (hostname → tunnel id)
+                        │
+نود خارج ──MWSS/…──► ایران :8443 (tunnel control) ──rtcp──► 127.0.0.1:Xray
+```
+
+| مرحله | مسیر منو | کار |
+|:---|:---|:---|
+| ۱ | `2 → 1 → 1` Iran panel | دامنه، پورت تونل، entry `:443`، transport، TLS، decoy، نود اول |
+| ۲ | روی سرور خارج: `2 → 1 → 3` Foreign node | همان Tunnel ID + آدرس ایران + target لوکال (مثلاً `127.0.0.1:2087`) |
+| ۳ | `2 → 1 → 2` Add node | نودهای بیشتر با hostname مثل `de.panel.example.com` |
+| — | `2 → 1 → 4` | فقط سایت فیک / probeResist |
+| — | `2 → 1 → 5` | وضعیت پنل و لیست نودها |
+
+**نکته‌ها**
+
+- مسیریابی چندنود با **hostname / SNI** است (نه path مثل nginx). برای هر نود یک ساب‌دامین یا Host جدا بگذارید.
+- Transport دو طرف (ایران و نود) باید یکی باشد؛ پیش‌فرض **MWSS**.
+- Decoy روی `:80` یک صفحهٔ عادی نشان می‌دهد تا پروب‌ها سایت ببینند.
+- state در `/etc/gost/wild-antifilter.json` ذخیره می‌شود.
+
 #### ۱) کدام نوع تونل را انتخاب کنم؟
 
 | نیاز شما | مسیر منو | توضیح کوتاه |
 |:---|:---|:---|
-| **Upstream روی سرور خارج (B)** | `2 → 1` | Relay/SOCKS برای تونل دو سرور |
-| **Entry تک‌پورت روی سرور ایران (A)** | `2 → 2` | کلاینت → A → B → Target |
-| **چند پورت / چند لوکیشن روی A** | `2 → 3` | چند listen و چند Server B |
-| پروکسی تک‌سروره (SOCKS/HTTP/SS) | `2 → 4` | کلاینت مستقیم به همین سرور |
-| فوروارد پورت محلی | `2 → 5` | مثلاً `:8080` → `192.168.1.10:80` |
-| سرویس پشت NAT | `2 → 6` | Reverse Tunnel |
-| DNS / TUN / File / Redirect | `2 → 7` | سایر سرویس‌ها |
+| **ضد فیلتر / ریورس ایران** | `2 → 1` | Anti-Filter (پیشنهادی) |
+| **Upstream روی سرور خارج (B)** | `2 → 2` | Relay/SOCKS برای تونل دو سرور |
+| **Entry تک‌پورت روی سرور ایران (A)** | `2 → 3` | کلاینت → A → B → Target |
+| **چند پورت / چند لوکیشن روی A** | `2 → 4` | چند listen و چند Server B |
+| پروکسی تک‌سروره (SOCKS/HTTP/SS) | `2 → 5` | کلاینت مستقیم به همین سرور |
+| فوروارد پورت محلی | `2 → 6` | مثلاً `:8080` → `192.168.1.10:80` |
+| Reverse Tunnel عمومی | `2 → 7` | بدون wizard ضد فیلتر |
+| DNS / TUN / File / Redirect | `2 → 8` | سایر سرویس‌ها |
 
 ---
 
@@ -124,17 +155,17 @@ Client  -->  Server A (listen)  -->  Transport  -->  Server B  -->  Target
 
 **گام ۱ — روی Server B (اول این را بسازید)**
 
-1. `sudo wild gost` → `2` → `1) Upstream`
+1. `sudo wild gost` → `2` → `2) Upstream`
 2. یک **نام** بگذارید (مثلاً `US`)
 3. پورت مثلاً `443` یا `2018`
 4. پروتکل: **Relay**
-5. Transport: **4 = MWSS**
+5. Transport: **1 = MWSS** (یا uTLS / KCP / otls / …)
 6. path را یادداشت کنید (پیش‌فرض `/ws`)
 7. در صورت نیاز username/password
 
 **گام ۲ — روی Server A (تک‌پورت)**
 
-1. `sudo wild gost` → `2` → `2) Entry single`
+1. `sudo wild gost` → `2` → `3) Entry single`
 2. نام کانفیگ
 3. Listen port (همان پورتی که کلاینت به آن وصل می‌شود)
 4. TCP یا UDP
@@ -144,7 +175,7 @@ Client  -->  Server A (listen)  -->  Transport  -->  Server B  -->  Target
 
 **گام ۲ جایگزین — Multi-Port / Multi-Location**
 
-1. `sudo wild gost` → `2` → `3) Entry multi`
+1. `sudo wild gost` → `2` → `4) Entry multi`
 2. نام گروه کانفیگ
 3. چند Location (نام + `IP:port` هر Server B)
 4. لیست پورت‌ها (مثلاً `8080,8443`)
@@ -164,14 +195,17 @@ Client  -->  Server A (listen)  -->  Transport  -->  Server B  -->  Target
 
 | گزینه | معنی | توصیه |
 |:---|:---|:---|
-| TCP | ساده | ریسک شناسایی بالا |
-| TLS | شبیه HTTPS | خوب |
-| WSS | WebSocket روی TLS | بهتر |
 | **MWSS** | TLS + WS + multiplex | **پیشنهادی** |
+| WSS | WebSocket روی TLS | خوب |
+| TLS / uTLS | HTTPS / اثر انگشت کلاینت | خوب / قوی‌تر |
+| otls | obfs-TLS | استتار |
+| KCP / QUIC | UDP | لینک پرلاس / شبیه HTTP3 |
+| gRPC | روی TLS | جایگزین WS |
+| TCP | ساده | ریسک شناسایی بالا |
 
 ---
 
-#### ۳) Reverse Tunnel (پشت NAT)
+#### ۳) Reverse Tunnel عمومی (پشت NAT)
 
 ```text
 Internet --> Public Server (entrypoint)
@@ -180,14 +214,15 @@ Internet --> Public Server (entrypoint)
            NAT Client --> Local service (مثلاً 127.0.0.1:80)
 ```
 
-**گام ۱ — سرور عمومی:** `2 → 6 → 1` — Tunnel port، Entrypoint، Hostname؛ **Tunnel ID** را ذخیره کنید  
-**گام ۲ — پشت NAT:** `2 → 6 → 2` — همان Tunnel ID، آدرس سرور عمومی، Target محلی (`rtcp`/`rudp`)
+برای ضد فیلتر ایران ترجیحاً از **Anti-Filter** (`2 → 1`) استفاده کنید.  
+**گام ۱ — سرور عمومی:** `2 → 7 → 1` — Tunnel port، Entrypoint، Hostname؛ **Tunnel ID** را ذخیره کنید  
+**گام ۲ — پشت NAT:** `2 → 7 → 2` — همان Tunnel ID، آدرس سرور عمومی، Target محلی (`rtcp`/`rudp`)
 
 ---
 
 #### ۴) پروکسی تک‌سروره
 
-منو: `2 → 4`
+منو: `2 → 5`
 
 SOCKS5 / HTTP / Relay / Shadowsocks روی همین ماشین. در صورت نیاز chain بالادستی هم می‌توانید وصل کنید.
 
@@ -200,7 +235,7 @@ http://SERVER_IP:8080
 
 #### ۵) Local Port Forward
 
-منو: `2 → 5`
+منو: `2 → 6`
 
 ```text
 listen :8080  -->  192.168.1.10:80
@@ -361,13 +396,14 @@ sudo wild gost
 **Add menu (`2`):**
 
 ```text
-1) Upstream (Server B)
-2) Entry single (Server A)
-3) Entry multi-port / multi-location (Server A)
-4) Proxy (SOCKS/HTTP/SS/...)
-5) Local port forward
-6) Reverse tunnel
-7) More (DNS/TUN/File/Redirect)
+1) Anti-Filter          ← recommended for censorship (Iran reverse)
+2) Upstream (Server B)
+3) Entry single (Server A)
+4) Entry multi-port / multi-location (Server A)
+5) Proxy (SOCKS/HTTP/SS/...)
+6) Local port forward
+7) Reverse tunnel (generic)
+8) More (DNS/TUN/File/Redirect)
 0) Back
 ```
 
@@ -377,10 +413,12 @@ sudo wild gost
 |:---|:---|
 | 🔧 Auto Install & Update | Detects architecture and downloads the latest stable release |
 | ⚙️ Systemd Integration | Start / Stop / Restart |
+| 🛡️ **Anti-Filter** | Iran reverse panel + foreign node + multi-node SNI + decoy site |
 | ➕ Two-server tunnel | Upstream (B) + single or multi-port/location Entry (A) |
 | 🏷️ Custom names | Per config / location |
 | ✏️ Edit | Service, chain, upstream, target, transport, policies |
-| 🛡️ Anti-DPI Transport | TLS / WSS / MWSS |
+| 🛡️ Anti-DPI Transport | MWSS / WSS / TLS / uTLS / otls / KCP / QUIC / gRPC |
+| 🎭 Decoy | Fake website + probeResist |
 | 🔐 Authentication | Username/password |
 | 📋 Safe JSON Config | Edited with `jq` |
 | 📜 Logs | Live / Errors / Export / Validate |
@@ -399,17 +437,38 @@ sudo wild gost
 
 Full guides live in this README (there is no in-script Help menu anymore).
 
+#### 0) Anti-Filter — reverse tunnel (recommended)
+
+Exit nodes dial Iran (reverse). Users only see the Iran domain/IP; foreign IPs stay private.
+
+```text
+Client ──SNI/Host──► Iran :443 (entrypoint)
+                         │
+                    ingress (hostname → tunnel id)
+                         │
+Exit node ──MWSS/…──► Iran :8443 (tunnel control) ──rtcp──► 127.0.0.1:Xray
+```
+
+| Step | Menu | Action |
+|:---|:---|:---|
+| 1 | `2 → 1 → 1` Iran panel | Domain, tunnel port, entry `:443`, transport, TLS, decoy, first node |
+| 2 | On exit: `2 → 1 → 3` Foreign node | Same Tunnel ID + Iran addr + local target (e.g. `127.0.0.1:2087`) |
+| 3 | `2 → 1 → 2` Add node | More nodes via hostname like `de.panel.example.com` |
+
+Multi-node routing uses **hostname / SNI** (not URL path). Transport must match on both sides (default **MWSS**). State: `/etc/gost/wild-antifilter.json`.
+
 #### 1) Which tunnel type should I choose?
 
 | Your need | Menu path | Short description |
 |:---|:---|:---|
-| **Upstream on exit server (B)** | `2 → 1` | Relay/SOCKS for two-server tunnel |
-| **Single entry on entry server (A)** | `2 → 2` | Client → A → B → Target |
-| **Multi-port / multi-location on A** | `2 → 3` | Several listens and several Server B nodes |
-| Single-server proxy (SOCKS/HTTP/SS) | `2 → 4` | Client connects directly to this server |
-| Local port forward | `2 → 5` | e.g. `:8080` → `192.168.1.10:80` |
-| Service behind NAT | `2 → 6` | Reverse Tunnel |
-| DNS / TUN / File / Redirect | `2 → 7` | Other services |
+| **Anti-filter / Iran reverse** | `2 → 1` | Anti-Filter (recommended) |
+| **Upstream on exit server (B)** | `2 → 2` | Relay/SOCKS for two-server tunnel |
+| **Single entry on entry server (A)** | `2 → 3` | Client → A → B → Target |
+| **Multi-port / multi-location on A** | `2 → 4` | Several listens and several Server B nodes |
+| Single-server proxy (SOCKS/HTTP/SS) | `2 → 5` | Client connects directly to this server |
+| Local port forward | `2 → 6` | e.g. `:8080` → `192.168.1.10:80` |
+| Generic reverse tunnel | `2 → 7` | Without anti-filter wizard |
+| DNS / TUN / File / Redirect | `2 → 8` | Other services |
 
 ---
 
@@ -429,17 +488,17 @@ Example:     -->  A:8080           -->  MWSS      -->  B:443     -->  127.0.0.1:
 
 **Step 1 — On Server B (create this first)**
 
-1. `sudo wild gost` → `2` → `1) Upstream`
+1. `sudo wild gost` → `2` → `2) Upstream`
 2. Give it a **name** (e.g. `US`)
 3. Port e.g. `443` or `2018`
 4. Protocol: **Relay**
-5. Transport: **4 = MWSS**
+5. Transport: **1 = MWSS** (or uTLS / KCP / otls / …)
 6. Note the WebSocket path (default `/ws`)
 7. Optional username/password
 
 **Step 2 — On Server A (single entry)**
 
-1. `sudo wild gost` → `2` → `2) Entry single`
+1. `sudo wild gost` → `2` → `3) Entry single`
 2. Config name
 3. Listen port (the port clients connect to)
 4. TCP or UDP
@@ -449,7 +508,7 @@ Example:     -->  A:8080           -->  MWSS      -->  B:443     -->  127.0.0.1:
 
 **Step 2 alternative — Multi-Port / Multi-Location**
 
-1. `sudo wild gost` → `2` → `3) Entry multi`
+1. `sudo wild gost` → `2` → `4) Entry multi`
 2. Config group name
 3. Add locations (name + each Server B `IP:port`)
 4. Ports list (e.g. `8080,8443`)
@@ -469,10 +528,13 @@ Example:     -->  A:8080           -->  MWSS      -->  B:443     -->  127.0.0.1:
 
 | Option | Meaning | Advice |
 |:---|:---|:---|
-| TCP | Plain | High detection risk |
-| TLS | HTTPS-like | Good |
-| WSS | WebSocket over TLS | Better |
 | **MWSS** | TLS + WS + multiplex | **Recommended** |
+| WSS | WebSocket over TLS | Good |
+| TLS / uTLS | HTTPS / client fingerprint | Good / stronger |
+| otls | obfs-TLS | Camouflage |
+| KCP / QUIC | UDP | Lossy links / HTTP3-like |
+| gRPC | Over TLS | WS alternative |
+| TCP | Plain | High detection risk |
 
 ---
 
@@ -485,14 +547,15 @@ Internet --> Public Server (entrypoint)
            NAT Client --> Local service (e.g. 127.0.0.1:80)
 ```
 
-**Public server:** `2 → 6 → 1` — tunnel port, entrypoint, hostname; save the **Tunnel ID**  
-**NAT client:** `2 → 6 → 2` — same Tunnel ID, public server address, local target (`rtcp`/`rudp`)
+Prefer **Anti-Filter** (`2 → 1`) for Iran censorship.  
+**Public server:** `2 → 7 → 1` — tunnel port, entrypoint, hostname; save the **Tunnel ID**  
+**NAT client:** `2 → 7 → 2` — same Tunnel ID, public server address, local target (`rtcp`/`rudp`)
 
 ---
 
 #### 4) Single-server proxy
 
-Menu: `2 → 4`
+Menu: `2 → 5`
 
 SOCKS5 / HTTP / Relay / Shadowsocks on this machine. Optional upstream chain supported.
 
@@ -505,7 +568,7 @@ http://SERVER_IP:8080
 
 #### 5) Local Port Forward
 
-Menu: `2 → 5`
+Menu: `2 → 6`
 
 ```text
 listen :8080  -->  192.168.1.10:80

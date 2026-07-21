@@ -13,6 +13,8 @@ DIM='\033[2m'
 NC='\033[0m'
 
 CONFIG_FILE="/etc/gost/config.json"
+ANTIFILTER_STATE="/etc/gost/wild-antifilter.json"
+DECOY_DIR="/var/www/wild-gost-decoy"
 GH_MIRRORS=("")
 
 # Shared wizard state
@@ -23,6 +25,8 @@ DIALER_TYPE="tcp"
 WS_PATH=""
 WS_HOST=""
 TRANSPORT_LABEL=""
+TLS_CERT_FILE=""
+TLS_KEY_FILE=""
 
 if [[ "$EUID" -ne '0' ]]; then
     echo -e "${RED}Error: You must run this script as root (use sudo).${NC}"
@@ -52,7 +56,7 @@ show_banner() {
     echo -e "${CYAN}  │${NC}      ${BOLD}${GREEN}╚═════╝  ╚═════╝ ╚══════╝   ╚═╝${NC}               ${CYAN}│${NC}"
     echo -e "${CYAN}  │${NC}                                                      ${CYAN}│${NC}"
     echo -e "${CYAN}  │${NC}   ${YELLOW}${BOLD}◆${NC} ${BOLD}Easy Tunnel Management${NC}                           ${CYAN}│${NC}"
-    echo -e "${CYAN}  │${NC}   ${DIM}GOST v3  ·  Multi-port  ·  Multi-location${NC}         ${CYAN}│${NC}"
+    echo -e "${CYAN}  │${NC}   ${DIM}GOST v3  ·  Anti-Filter  ·  Multi-location${NC}        ${CYAN}│${NC}"
     echo -e "${CYAN}  │${NC}   ${DIM}github.com/infowild/Wild-Gost${NC}                     ${CYAN}│${NC}"
     echo -e "${CYAN}  │${NC}                                                      ${CYAN}│${NC}"
     echo -e "${CYAN}  ╰──────────────────────────────────────────────────────╯${NC}"
@@ -460,14 +464,26 @@ select_dialer_transport() {
 build_listener_json() {
     local ltype="$1"
     local path="$2"
+    local cert="${3:-$TLS_CERT_FILE}"
+    local key="${4:-$TLS_KEY_FILE}"
+    local base
     case "$ltype" in
         ws|wss|mws|mwss)
-            jq -n --arg t "$ltype" --arg p "${path:-/ws}" '{type: $t, metadata: {path: $p}}'
+            base=$(jq -n --arg t "$ltype" --arg p "${path:-/ws}" '{type: $t, metadata: {path: $p}}')
             ;;
         *)
-            jq -n --arg t "$ltype" '{type: $t}'
+            base=$(jq -n --arg t "$ltype" '{type: $t}')
             ;;
     esac
+    case "$ltype" in
+        tls|mtls|wss|mwss|https|http2|http3|h2|h3|quic|grpc|otls)
+            if [ -n "$cert" ] && [ -n "$key" ] && [ -f "$cert" ] && [ -f "$key" ]; then
+                echo "$base" | jq --arg c "$cert" --arg k "$key" '. + {tls: {certFile: $c, keyFile: $k}}'
+                return 0
+            fi
+            ;;
+    esac
+    echo "$base"
 }
 
 build_dialer_json() {
@@ -956,7 +972,7 @@ add_file_server() {
     echo -e "${GREEN}File server $name serving $dir on :$port${NC}"
 }
 
-# ---------- remote port forward (kept / enhanced) ----------
+# ---------- transport presets / TLS / decoy / anti-filter ----------
 
 select_transport_preset() {
     LISTENER_TYPE="tcp"
@@ -964,29 +980,493 @@ select_transport_preset() {
     WS_PATH=""
     WS_HOST=""
     TRANSPORT_LABEL="Plain TCP"
-    echo -e "\n${CYAN}Transport:${NC}"
-    echo -e "1) TCP   2) TLS   3) WSS   4) MWSS ${GREEN}(recommended)${NC}   5) Advanced   0) Back"
-    read -p "Choice [4]: " c
-    [ -z "$c" ] && c="4"
+    echo -e "\n${CYAN}Anti-DPI transport preset:${NC}"
+    echo -e "1) MWSS   ${GREEN}(recommended — TLS+WS+mux)${NC}"
+    echo -e "2) WSS    (TLS + WebSocket)"
+    echo -e "3) TLS"
+    echo -e "4) uTLS   (client fingerprint spoof; dialer=utls, listener=tls)"
+    echo -e "5) otls   (obfs-TLS)"
+    echo -e "6) KCP    (UDP + FEC, lossy links)"
+    echo -e "7) QUIC"
+    echo -e "8) gRPC"
+    echo -e "9) TCP    (no encryption)"
+    echo -e "10) Advanced (pick listener + dialer separately)"
+    echo -e "0) Back"
+    read -p "Choice [1]: " c
+    [ -z "$c" ] && c="1"
     is_back_choice "$c" && return 1
     case $c in
-        1) LISTENER_TYPE="tcp"; DIALER_TYPE="tcp"; TRANSPORT_LABEL="Plain TCP" ;;
-        2) LISTENER_TYPE="tls"; DIALER_TYPE="tls"; TRANSPORT_LABEL="TLS"
+        1) LISTENER_TYPE="mwss"; DIALER_TYPE="mwss"; TRANSPORT_LABEL="MWSS"
+           read -p "WebSocket path [/ws]: " WS_PATH; [ -z "$WS_PATH" ] && WS_PATH="/ws"
+           read -p "Host / SNI (optional): " WS_HOST ;;
+        2) LISTENER_TYPE="wss"; DIALER_TYPE="wss"; TRANSPORT_LABEL="WSS"
+           read -p "WebSocket path [/ws]: " WS_PATH; [ -z "$WS_PATH" ] && WS_PATH="/ws"
+           read -p "Host / SNI (optional): " WS_HOST ;;
+        3) LISTENER_TYPE="tls"; DIALER_TYPE="tls"; TRANSPORT_LABEL="TLS"
            read -p "SNI / serverName (optional): " WS_HOST ;;
-        3) LISTENER_TYPE="wss"; DIALER_TYPE="wss"; TRANSPORT_LABEL="WSS"
-           read -p "WebSocket path [/ws]: " WS_PATH; [ -z "$WS_PATH" ] && WS_PATH="/ws"
-           read -p "Host / SNI (optional): " WS_HOST ;;
-        4) LISTENER_TYPE="mwss"; DIALER_TYPE="mwss"; TRANSPORT_LABEL="MWSS"
-           read -p "WebSocket path [/ws]: " WS_PATH; [ -z "$WS_PATH" ] && WS_PATH="/ws"
-           read -p "Host / SNI (optional): " WS_HOST ;;
-        5)
+        4) LISTENER_TYPE="tls"; DIALER_TYPE="utls"; TRANSPORT_LABEL="uTLS"
+           read -p "SNI / serverName (optional): " WS_HOST ;;
+        5) LISTENER_TYPE="otls"; DIALER_TYPE="otls"; TRANSPORT_LABEL="obfs-TLS" ;;
+        6) LISTENER_TYPE="kcp"; DIALER_TYPE="kcp"; TRANSPORT_LABEL="KCP" ;;
+        7) LISTENER_TYPE="quic"; DIALER_TYPE="quic"; TRANSPORT_LABEL="QUIC" ;;
+        8) LISTENER_TYPE="grpc"; DIALER_TYPE="grpc"; TRANSPORT_LABEL="gRPC"
+           read -p "SNI / serverName (optional): " WS_HOST ;;
+        9) LISTENER_TYPE="tcp"; DIALER_TYPE="tcp"; TRANSPORT_LABEL="Plain TCP" ;;
+        10)
            select_listener_transport || return 1
-           DIALER_TYPE="$LISTENER_TYPE"
+           select_dialer_transport || return 1
+           TRANSPORT_LABEL="${LISTENER_TYPE}/${DIALER_TYPE}"
            ;;
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
     return 0
 }
+
+prompt_tls_certs() {
+    # Sets TLS_CERT_FILE / TLS_KEY_FILE. Arg1=domain for CN when generating.
+    local domain="${1:-localhost}"
+    local choice cert_dir
+    TLS_CERT_FILE=""
+    TLS_KEY_FILE=""
+    echo -e "\n${CYAN}TLS certificate:${NC}"
+    echo -e "1) Provide existing cert/key paths"
+    echo -e "2) Generate self-signed (quick test)"
+    echo -e "3) Skip (GOST auto / plain)"
+    echo -e "0) Back"
+    read -p "Choice [1]: " choice
+    [ -z "$choice" ] && choice="1"
+    is_back_choice "$choice" && return 1
+    case $choice in
+        1)
+            prompt_or_back "Fullchain / cert.pem path" || return 1
+            TLS_CERT_FILE="$REPLY_VALUE"
+            prompt_or_back "Private key path" || return 1
+            TLS_KEY_FILE="$REPLY_VALUE"
+            if [ ! -f "$TLS_CERT_FILE" ] || [ ! -f "$TLS_KEY_FILE" ]; then
+                echo -e "${RED}Cert or key file not found.${NC}"
+                return 1
+            fi
+            ;;
+        2)
+            if ! command -v openssl &>/dev/null; then
+                echo -e "${RED}openssl not found.${NC}"
+                return 1
+            fi
+            cert_dir="/etc/gost/certs"
+            mkdir -p "$cert_dir"
+            TLS_CERT_FILE="$cert_dir/${domain}.crt"
+            TLS_KEY_FILE="$cert_dir/${domain}.key"
+            openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -nodes \
+                -keyout "$TLS_KEY_FILE" -out "$TLS_CERT_FILE" \
+                -subj "/CN=$domain" \
+                -addext "subjectAltName=DNS:$domain,DNS:*.$domain" 2>/dev/null \
+            || openssl req -x509 -newkey rsa:2048 -sha256 -days 825 -nodes \
+                -keyout "$TLS_KEY_FILE" -out "$TLS_CERT_FILE" \
+                -subj "/CN=$domain"
+            chmod 600 "$TLS_KEY_FILE"
+            echo -e "${GREEN}Self-signed cert written to $TLS_CERT_FILE${NC}"
+            ;;
+        3) ;;
+        *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
+    esac
+    return 0
+}
+
+ensure_decoy_site() {
+    local dir="${1:-$DECOY_DIR}"
+    mkdir -p "$dir"
+    if [ ! -f "$dir/index.html" ]; then
+        cat > "$dir/index.html" <<'HTML'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome</title>
+  <style>
+    body { font-family: Georgia, serif; max-width: 42rem; margin: 4rem auto; padding: 0 1.25rem;
+           color: #1a1a1a; background: #f7f5f0; line-height: 1.6; }
+    h1 { font-weight: 400; letter-spacing: 0.02em; }
+    p { color: #444; }
+    footer { margin-top: 3rem; font-size: 0.85rem; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>It works</h1>
+  <p>This site is under construction. Please check back later.</p>
+  <footer>&copy; 2026</footer>
+</body>
+</html>
+HTML
+    fi
+    echo "$dir"
+}
+
+save_antifilter_state() {
+    local json="$1"
+    mkdir -p "$(dirname "$ANTIFILTER_STATE")"
+    echo "$json" | jq . > "$ANTIFILTER_STATE"
+}
+
+load_antifilter_state() {
+    if [ -f "$ANTIFILTER_STATE" ]; then
+        cat "$ANTIFILTER_STATE"
+    else
+        echo '{}'
+    fi
+}
+
+print_foreign_node_oneliner() {
+    local iran_addr="$1" tid="$2" transport="$3" path="$4" host="$5" target="$6" name="$7"
+    echo -e "\n${CYAN}── Foreign node one-liner (run on exit server) ──${NC}"
+    echo -e "${YELLOW}sudo wild gost${NC}  →  Add  →  Anti-Filter  →  Foreign node"
+    echo -e "  Name       : ${GREEN}${name}${NC}"
+    echo -e "  Iran addr  : ${GREEN}${iran_addr}${NC}"
+    echo -e "  Tunnel ID  : ${GREEN}${tid}${NC}"
+    echo -e "  Transport  : ${GREEN}${transport}${NC}"
+    [ -n "$path" ] && echo -e "  WS path    : ${GREEN}${path}${NC}"
+    [ -n "$host" ] && echo -e "  SNI/Host   : ${GREEN}${host}${NC}"
+    echo -e "  Local target (Xray inbound): ${GREEN}${target}${NC}"
+}
+
+setup_decoy_service() {
+    require_gost || return 1
+    echo -e "${CYAN}--- Decoy / Fake Website ---${NC}"
+    echo -e "Serves a normal-looking site so active probes see a webpage, not a proxy."
+    local port mode dir name svc handler_json listener_json decoy_file knock user pass
+    local decoy_dir
+    decoy_dir=$(ensure_decoy_site)
+    decoy_file="$decoy_dir/index.html"
+
+    echo -e "1) File server (plain decoy site)"
+    echo -e "2) HTTP proxy + probeResist file (needs auth; probe sees decoy HTML)"
+    echo -e "3) HTTP proxy + probeResist code:404"
+    echo -e "0) Back"
+    read -p "Choice [1]: " mode
+    [ -z "$mode" ] && mode="1"
+    is_back_choice "$mode" && return 0
+
+    prompt_or_back "Listen port [80]" || return 0
+    port="$REPLY_VALUE"
+    [ -z "$port" ] && port="80"
+    validate_listen_port "$port" || return 1
+
+    prompt_tls_certs "decoy.local" || return 0
+    if [ -n "$TLS_CERT_FILE" ]; then
+        LISTENER_TYPE="tls"
+        TRANSPORT_LABEL="TLS"
+    else
+        LISTENER_TYPE="tcp"
+        TRANSPORT_LABEL="TCP"
+    fi
+
+    case $mode in
+        1)
+            name="decoy-file-$port"
+            handler_json=$(build_handler_json "file" "" "" "$(jq -n --arg d "$decoy_dir" '{dir: $d}')")
+            ;;
+        2|3)
+            prompt_auth || return 1
+            if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
+                user="wild"; pass=$(openssl rand -hex 8 2>/dev/null || echo "changeme")
+                USERNAME="$user"; PASSWORD="$pass"
+                echo -e "${YELLOW}Auto auth: ${USERNAME} / ${PASSWORD}${NC}"
+            fi
+            read -p "Knock host for real 407 (optional, e.g. knock.local): " knock
+            local meta
+            if [ "$mode" = "2" ]; then
+                meta=$(jq -n --arg pr "file:$decoy_file" --arg k "$knock" \
+                    '{probeResist: $pr} + (if $k != "" then {knock: $k} else {} end)')
+            else
+                meta=$(jq -n --arg k "$knock" \
+                    '{probeResist: "code:404"} + (if $k != "" then {knock: $k} else {} end)')
+            fi
+            name="decoy-http-$port"
+            handler_json=$(build_handler_json "http" "$USERNAME" "$PASSWORD" "$meta")
+            ;;
+        *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
+    esac
+
+    listener_json=$(build_listener_json "$LISTENER_TYPE" "" "$TLS_CERT_FILE" "$TLS_KEY_FILE")
+    svc=$(jq -n --arg n "$name" --arg a ":$port" --argjson h "$handler_json" --argjson l "$listener_json" \
+        --arg role "decoy" \
+        '{name:$n,addr:$a,handler:$h,listener:$l,metadata:{role:$role}}')
+    append_service "$svc"
+    restart_gost
+    echo -e "${GREEN}Decoy ready on :$port ($TRANSPORT_LABEL) → $decoy_dir${NC}"
+}
+
+setup_antifilter_iran_panel() {
+    require_gost || return 1
+    echo -e "${CYAN}--- Anti-Filter: Iran Panel (reverse) ---${NC}"
+    echo -e "Foreign nodes dial THIS server. Users hit entry :443 by hostname/SNI."
+    echo -e "Only Iran IP/domain is public — exit IPs stay hidden."
+    echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
+
+    if [ -f "$ANTIFILTER_STATE" ] && [ "$(jq -r '.role // empty' "$ANTIFILTER_STATE")" = "iran-panel" ]; then
+        echo -e "${YELLOW}Existing panel state found. Continue will keep adding on top of config.${NC}"
+        read -p "Continue anyway? (y/n) [y]: " cont
+        [ -z "$cont" ] && cont="y"
+        [ "$cont" != "y" ] && [ "$cont" != "Y" ] && return 0
+    fi
+
+    local domain tunnel_port entry_port decoy_port ingress_name tunnel_name decoy_name
+    local tid node_name hostname target first_node_json state listener_json svc ingress decoy_dir
+    local public_ip
+
+    prompt_or_back "Panel domain (e.g. panel.example.com)" || return 0
+    domain="$REPLY_VALUE"
+    [ -z "$domain" ] && { echo -e "${RED}Domain required.${NC}"; return 1; }
+
+    prompt_or_back "Tunnel control port (nodes dial this) [8443]" || return 0
+    tunnel_port="$REPLY_VALUE"
+    [ -z "$tunnel_port" ] && tunnel_port="8443"
+    validate_listen_port "$tunnel_port" || return 1
+
+    prompt_or_back "User entrypoint port [443]" || return 0
+    entry_port="$REPLY_VALUE"
+    [ -z "$entry_port" ] && entry_port="443"
+    if [[ ! "$entry_port" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}Invalid entry port!${NC}"; return 1
+    fi
+
+    select_transport_preset || return 1
+    prompt_tls_certs "$domain" || return 0
+
+    echo -e "\n${CYAN}Decoy website (recommended)${NC}"
+    read -p "Enable decoy file server on port 80? (y/n) [y]: " want_decoy
+    [ -z "$want_decoy" ] && want_decoy="y"
+    decoy_port=""
+    decoy_dir=$(ensure_decoy_site)
+
+    # First node
+    echo -e "\n${CYAN}First foreign node${NC}"
+    prompt_config_name "Node name" "trk01" || return 0
+    node_name="$REPLY_VALUE"
+    hostname="${node_name}.${domain}"
+    read -p "Hostname / SNI for this node [$hostname]: " hn
+    [ -n "$hn" ] && hostname="$hn"
+    prompt_or_back "Hint: Xray inbound on node (e.g. 127.0.0.1:2087) [127.0.0.1:2087]" || return 0
+    target="$REPLY_VALUE"
+    [ -z "$target" ] && target="127.0.0.1:2087"
+    tid=$(gen_uuid)
+
+    ingress_name="ingress-antifilter"
+    tunnel_name="antifilter-tunnel"
+
+    # Remove old antifilter objects with same names if re-run
+    jq --arg ing "$ingress_name" --arg tn "$tunnel_name" \
+        'del(.ingresses[]? | select(.name==$ing))
+         | del(.services[]? | select(.name==$tn or (.metadata.role? == "antifilter-decoy")))' \
+        "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+
+    ingress=$(jq -n --arg n "$ingress_name" --arg h "$hostname" --arg e "$tid" \
+        '{name: $n, rules: [{hostname: $h, endpoint: $e}]}')
+    append_named_array "ingresses" "$ingress"
+
+    listener_json=$(build_listener_json "$LISTENER_TYPE" "$WS_PATH" "$TLS_CERT_FILE" "$TLS_KEY_FILE")
+    svc=$(jq -n \
+        --arg n "$tunnel_name" --arg a ":$tunnel_port" --arg ep ":$entry_port" \
+        --arg ing "$ingress_name" --argjson l "$listener_json" \
+        --arg domain "$domain" --arg tr "$TRANSPORT_LABEL" \
+        '{name:$n,addr:$a,handler:{type:"tunnel",metadata:{entrypoint:$ep,ingress:$ing}},listener:$l,
+          metadata:{role:"antifilter-panel",domain:$domain,transport:$tr}}')
+    append_service "$svc"
+
+    if [ "$want_decoy" = "y" ] || [ "$want_decoy" = "Y" ]; then
+        decoy_port="80"
+        local port_busy
+        port_busy=$(jq -r --arg p ":$decoy_port" '.services[]? | select(.addr == $p) | .name' "$CONFIG_FILE")
+        if [ -z "$port_busy" ]; then
+            decoy_name="antifilter-decoy-80"
+            local dh dl
+            dh=$(build_handler_json "file" "" "" "$(jq -n --arg d "$decoy_dir" '{dir: $d}')")
+            dl=$(jq -n '{type:"tcp"}')
+            svc=$(jq -n --arg n "$decoy_name" --arg a ":$decoy_port" --argjson h "$dh" --argjson l "$dl" \
+                '{name:$n,addr:$a,handler:$h,listener:$l,metadata:{role:"antifilter-decoy"}}')
+            append_service "$svc"
+        else
+            echo -e "${YELLOW}:80 already used by $port_busy — skip decoy listener (site still at $decoy_dir).${NC}"
+            decoy_port=""
+        fi
+    fi
+
+    first_node_json=$(jq -n --arg name "$node_name" --arg host "$hostname" --arg id "$tid" --arg t "$target" \
+        '{name:$name,hostname:$host,tunnel_id:$id,target:$t}')
+
+    public_ip=$(curl -4 -fsS --connect-timeout 5 ifconfig.me 2>/dev/null || curl -4 -fsS --connect-timeout 5 icanhazip.com 2>/dev/null || echo "<IRAN_IP>")
+
+    state=$(jq -n \
+        --arg role "iran-panel" --arg domain "$domain" \
+        --argjson tport "$tunnel_port" --argjson eport "$entry_port" \
+        --arg ingress "$ingress_name" --arg tunnel "$tunnel_name" \
+        --arg tr "$TRANSPORT_LABEL" --arg lt "$LISTENER_TYPE" --arg dt "$DIALER_TYPE" \
+        --arg path "$WS_PATH" --arg host "$WS_HOST" \
+        --arg cert "$TLS_CERT_FILE" --arg key "$TLS_KEY_FILE" \
+        --arg decoy "$decoy_dir" --arg dport "$decoy_port" \
+        --arg ip "$public_ip" --argjson node "$first_node_json" \
+        '{role:$role,domain:$domain,tunnel_port:$tport,entry_port:$eport,
+          ingress:$ingress,tunnel_service:$tunnel,transport:$tr,
+          listener:$lt,dialer:$dt,ws_path:$path,ws_host:$host,
+          cert_file:$cert,key_file:$key,decoy_dir:$decoy,decoy_port:$dport,
+          public_ip:$ip,nodes:[$node]}')
+    save_antifilter_state "$state"
+    restart_gost
+
+    echo -e "\n${GREEN}Iran panel ready.${NC}"
+    echo -e "  Domain       : ${YELLOW}$domain${NC}"
+    echo -e "  Tunnel       : ${YELLOW}${public_ip}:$tunnel_port${NC} ($TRANSPORT_LABEL)"
+    echo -e "  User entry   : ${YELLOW}:$entry_port${NC} (SNI/Host → node)"
+    echo -e "  First node   : ${YELLOW}$node_name${NC} → hostname ${YELLOW}$hostname${NC}"
+    [ -n "$decoy_port" ] && echo -e "  Decoy        : ${YELLOW}:$decoy_port${NC} → $decoy_dir"
+    print_foreign_node_oneliner "${public_ip}:${tunnel_port}" "$tid" "$TRANSPORT_LABEL" "$WS_PATH" "${WS_HOST:-$domain}" "$target" "$node_name"
+    echo -e "\n${DIM}Users connect to hostname $hostname on :$entry_port (TLS/HTTP with SNI).${NC}"
+    echo -e "${DIM}Add more nodes: Add → Anti-Filter → Add node to panel${NC}"
+}
+
+setup_antifilter_add_node() {
+    require_gost || return 1
+    if [ ! -f "$ANTIFILTER_STATE" ] || [ "$(jq -r '.role // empty' "$ANTIFILTER_STATE")" != "iran-panel" ]; then
+        echo -e "${RED}No Iran panel state. Run 'Iran panel' first.${NC}"
+        return 1
+    fi
+    echo -e "${CYAN}--- Anti-Filter: Add node to Iran panel ---${NC}"
+    local domain ingress_name node_name hostname tid target state node_json public_ip tunnel_port
+    local transport path host
+
+    domain=$(jq -r '.domain' "$ANTIFILTER_STATE")
+    ingress_name=$(jq -r '.ingress' "$ANTIFILTER_STATE")
+    tunnel_port=$(jq -r '.tunnel_port' "$ANTIFILTER_STATE")
+    public_ip=$(jq -r '.public_ip // "<IRAN_IP>"' "$ANTIFILTER_STATE")
+    transport=$(jq -r '.transport' "$ANTIFILTER_STATE")
+    path=$(jq -r '.ws_path // empty' "$ANTIFILTER_STATE")
+    host=$(jq -r '.ws_host // empty' "$ANTIFILTER_STATE")
+    [ -z "$host" ] && host="$domain"
+
+    prompt_config_name "Node name" || return 0
+    node_name="$REPLY_VALUE"
+    hostname="${node_name}.${domain}"
+    read -p "Hostname / SNI [$hostname]: " hn
+    [ -n "$hn" ] && hostname="$hn"
+    prompt_or_back "Xray inbound hint on node [127.0.0.1:2087]" || return 0
+    target="$REPLY_VALUE"
+    [ -z "$target" ] && target="127.0.0.1:2087"
+    tid=$(gen_uuid)
+
+    if ! jq -e --arg n "$ingress_name" '.ingresses[]? | select(.name==$n)' "$CONFIG_FILE" >/dev/null; then
+        echo -e "${RED}Ingress $ingress_name missing from config.json${NC}"
+        return 1
+    fi
+
+    jq --arg n "$ingress_name" --arg h "$hostname" --arg e "$tid" \
+        '(.ingresses[] | select(.name==$n) | .rules) += [{hostname:$h, endpoint:$e}]' \
+        "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+
+    node_json=$(jq -n --arg name "$node_name" --arg host "$hostname" --arg id "$tid" --arg t "$target" \
+        '{name:$name,hostname:$host,tunnel_id:$id,target:$t}')
+    state=$(jq --argjson node "$node_json" '.nodes += [$node]' "$ANTIFILTER_STATE")
+    save_antifilter_state "$state"
+    restart_gost
+
+    echo -e "${GREEN}Node $node_name added → $hostname${NC}"
+    print_foreign_node_oneliner "${public_ip}:${tunnel_port}" "$tid" "$transport" "$path" "$host" "$target" "$node_name"
+}
+
+setup_antifilter_foreign_node() {
+    require_gost || return 1
+    echo -e "${CYAN}--- Anti-Filter: Foreign node (reverse client) ---${NC}"
+    echo -e "This server dials Iran. No public port needed on this host."
+    echo -e "${YELLOW}Enter 0 at any prompt to go back.${NC}"
+
+    local name tid server_addr target chain_name svc ch path host
+
+    prompt_config_name "Node name" "node" || return 0
+    name="$REPLY_VALUE"
+    prompt_or_back "Tunnel ID (UUID from Iran panel)" || return 0
+    tid="$REPLY_VALUE"
+    [ -z "$tid" ] && { echo -e "${RED}Tunnel ID required!${NC}"; return 1; }
+    prompt_or_back "Iran tunnel address (IP_or_host:port)" || return 0
+    server_addr="$REPLY_VALUE"
+    [[ ! "$server_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid address!${NC}"; return 1; }
+    prompt_or_back "Local target to expose (e.g. 127.0.0.1:2087)" || return 0
+    target="$REPLY_VALUE"
+    [[ ! "$target" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid target!${NC}"; return 1; }
+
+    echo -e "\n${CYAN}Transport must match Iran panel${NC}"
+    select_transport_preset || return 1
+    path="$WS_PATH"
+    host="$WS_HOST"
+
+    chain_name="chain-antifilter-$name"
+    ch=$(jq -n --arg n "$chain_name" --arg addr "$server_addr" --arg tid "$tid" \
+        --argjson dialer "$(build_dialer_json "$DIALER_TYPE" "$path" "$host")" \
+        '{name:$n,hops:[{name:"hop-0",nodes:[{name:"node-0",addr:$addr,
+          connector:{type:"tunnel",metadata:{"tunnel.id":$tid}},dialer:$dialer}]}]}')
+    append_chain "$ch"
+
+    svc=$(jq -n --arg n "antifilter-node-$name" --arg c "$chain_name" --arg t "$target" \
+        --arg tid "$tid" --arg addr "$server_addr" \
+        '{name:$n,addr:":0",handler:{type:"rtcp"},listener:{type:"rtcp",chain:$c},
+          forwarder:{nodes:[{name:"target",addr:$t}]},
+          metadata:{role:"antifilter-node",tunnel_id:$tid,iran:$addr}}')
+    append_service "$svc"
+
+    local node_state
+    node_state=$(jq -n --arg role "foreign-node" --arg name "$name" --arg tid "$tid" \
+        --arg iran "$server_addr" --arg t "$target" --arg tr "$TRANSPORT_LABEL" \
+        --arg path "$path" --arg host "$host" \
+        '{role:$role,name:$name,tunnel_id:$tid,iran:$iran,target:$t,transport:$tr,ws_path:$path,ws_host:$host}')
+    # Keep panel state if present; otherwise write node state
+    if [ ! -f "$ANTIFILTER_STATE" ] || [ "$(jq -r '.role // empty' "$ANTIFILTER_STATE")" != "iran-panel" ]; then
+        save_antifilter_state "$node_state"
+    fi
+
+    restart_gost
+    echo -e "${GREEN}Foreign node '$name' connected → exposes $target via reverse tunnel.${NC}"
+    echo -e "${DIM}Ensure local Xray/proxy is listening on $target.${NC}"
+}
+
+setup_antifilter_status() {
+    echo -e "${CYAN}--- Anti-Filter status ---${NC}"
+    if [ ! -f "$ANTIFILTER_STATE" ]; then
+        echo -e "${YELLOW}No anti-filter state file ($ANTIFILTER_STATE).${NC}"
+        return 0
+    fi
+    jq -C . "$ANTIFILTER_STATE" 2>/dev/null || cat "$ANTIFILTER_STATE"
+    echo ""
+    if [ -f "$CONFIG_FILE" ]; then
+        echo -e "${CYAN}Config services with antifilter role:${NC}"
+        jq -r '.services[]? | select(.metadata.role? | tostring | startswith("antifilter")) | "  - \(.name)  \(.addr)  \(.metadata.role)"' "$CONFIG_FILE"
+        echo -e "${CYAN}Ingress rules:${NC}"
+        jq -r '.ingresses[]? | select(.name|test("antifilter")) | .rules[]? | "  - \(.hostname) → \(.endpoint)"' "$CONFIG_FILE"
+    fi
+}
+
+setup_antifilter_menu() {
+    while true; do
+        echo -e "\n${CYAN}--- Anti-Filter (Iran reverse) ---${NC}"
+        echo -e "${GREEN}1) Iran panel${NC}     — reverse server + entry :443 + decoy"
+        echo -e "${GREEN}2) Add node${NC}       — hostname/SNI → new foreign tunnel"
+        echo -e "${GREEN}3) Foreign node${NC}   — exit server dials Iran (no public port)"
+        echo -e "4) Decoy site only"
+        echo -e "5) Status"
+        echo -e "0) Back"
+        read -p "Choice: " c
+        case $c in
+            1) setup_antifilter_iran_panel ;;
+            2) setup_antifilter_add_node ;;
+            3) setup_antifilter_foreign_node ;;
+            4) setup_decoy_service ;;
+            5) setup_antifilter_status ;;
+            0|q|Q|b|B) return 0 ;;
+            *) echo -e "${RED}Invalid!${NC}" ;;
+        esac
+    done
+}
+
+# ---------- remote port forward (kept / enhanced) ----------
+
+# (select_transport_preset defined above in anti-filter section)
 
 setup_remote_port_forward_upstream() {
     require_gost || return 1
@@ -1480,23 +1960,25 @@ add_service_menu() {
     require_gost || return 1
     while true; do
         echo -e "\n${CYAN}--- Add ---${NC}"
-        echo -e "1) Upstream (Server B)"
-        echo -e "2) Entry single (Server A)"
-        echo -e "3) Entry multi-port / multi-location (Server A)"
-        echo -e "4) Proxy (SOCKS/HTTP/SS/...)"
-        echo -e "5) Local port forward"
-        echo -e "6) Reverse tunnel"
-        echo -e "7) More (DNS/TUN/File/Redirect)"
+        echo -e "${GREEN}1) Anti-Filter${NC}  — Iran reverse panel / foreign node / decoy"
+        echo -e "2) Upstream (Server B)"
+        echo -e "3) Entry single (Server A)"
+        echo -e "4) Entry multi-port / multi-location (Server A)"
+        echo -e "5) Proxy (SOCKS/HTTP/SS/...)"
+        echo -e "6) Local port forward"
+        echo -e "7) Reverse tunnel (generic)"
+        echo -e "8) More (DNS/TUN/File/Redirect)"
         echo -e "0) Back"
         read -p "Choice: " c
         case $c in
-            1) setup_remote_port_forward_upstream ;;
-            2) setup_remote_port_forward_entry ;;
-            3) setup_multi_port_location_entry ;;
-            4) add_proxy_service ;;
-            5) add_local_port_forward ;;
-            6) setup_reverse_tunnel_menu ;;
-            7) add_more_services_menu ;;
+            1) setup_antifilter_menu ;;
+            2) setup_remote_port_forward_upstream ;;
+            3) setup_remote_port_forward_entry ;;
+            4) setup_multi_port_location_entry ;;
+            5) add_proxy_service ;;
+            6) add_local_port_forward ;;
+            7) setup_reverse_tunnel_menu ;;
+            8) add_more_services_menu ;;
             0|q|Q|b|B) return 0 ;;
             *) echo -e "${RED}Invalid!${NC}" ;;
         esac
@@ -2306,6 +2788,9 @@ list_tunnels() {
     echo -e "API        : $(jq -r '.api.addr // "off"' "$CONFIG_FILE")"
     echo -e "Metrics    : $(jq -r '.metrics.addr // "off"' "$CONFIG_FILE")"
     echo -e "Profiling  : $(jq -r '.profiling.addr // "off"' "$CONFIG_FILE")"
+    if [ -f "$ANTIFILTER_STATE" ]; then
+        echo -e "Anti-Filter: ${GREEN}$(jq -r '.role // "?"' "$ANTIFILTER_STATE")${NC}  nodes=$(jq '.nodes // [] | length' "$ANTIFILTER_STATE" 2>/dev/null || echo 0)"
+    fi
     echo -e "Config file: $CONFIG_FILE"
 }
 
@@ -2453,8 +2938,9 @@ uninstall_gost() {
 
     echo -e "${CYAN}Removing configuration, tunnels, chains, policies, and certs...${NC}"
     # Always wipe /etc/gost so leftover tunnels/chains/bypass/admission/limiter/
-    # resolvers/ingresses/api/metrics cannot survive uninstall.
+    # resolvers/ingresses/api/metrics/anti-filter state cannot survive uninstall.
     rm -rf /etc/gost
+    rm -rf "$DECOY_DIR" 2>/dev/null || true
 
     echo -e "${CYAN}Verifying cleanup...${NC}"
     local leftover=0
