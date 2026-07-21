@@ -490,18 +490,47 @@ build_dialer_json() {
     local dtype="$1"
     local path="$2"
     local host="$3"
+    # Arg4 optional: "insecure" → tls.secure=false (default for anti-filter / self-signed)
+    local insecure="${4:-}"
     case "$dtype" in
         tls|utls|mtls)
             if [ -n "$host" ]; then
+                if [ "$insecure" = "insecure" ]; then
+                    jq -n --arg t "$dtype" --arg h "$host" '{type: $t, tls: {serverName: $h, secure: false}}'
+                else
+                    jq -n --arg t "$dtype" --arg h "$host" '{type: $t, tls: {serverName: $h}}'
+                fi
+            else
+                if [ "$insecure" = "insecure" ]; then
+                    jq -n --arg t "$dtype" '{type: $t, tls: {secure: false}}'
+                else
+                    jq -n --arg t "$dtype" '{type: $t}'
+                fi
+            fi
+            ;;
+        ws|wss|mws|mwss)
+            if [ "$insecure" = "insecure" ] && [[ "$dtype" == wss || "$dtype" == mwss ]]; then
+                jq -n --arg t "$dtype" --arg p "${path:-/ws}" --arg h "$host" '
+                    {type: $t,
+                     metadata: ({path: $p} + (if $h != "" then {host: $h} else {} end)),
+                     tls: ({secure: false} + (if $h != "" then {serverName: $h} else {} end))}
+                '
+            else
+                jq -n --arg t "$dtype" --arg p "${path:-/ws}" --arg h "$host" '
+                    {type: $t, metadata: ({path: $p} + (if $h != "" then {host: $h} else {} end))}
+                '
+            fi
+            ;;
+        grpc|quic|otls|http2|http3|h2|h3)
+            if [ "$insecure" = "insecure" ]; then
+                jq -n --arg t "$dtype" --arg h "$host" '
+                    {type: $t, tls: ({secure: false} + (if $h != "" then {serverName: $h} else {} end))}
+                '
+            elif [ -n "$host" ]; then
                 jq -n --arg t "$dtype" --arg h "$host" '{type: $t, tls: {serverName: $h}}'
             else
                 jq -n --arg t "$dtype" '{type: $t}'
             fi
-            ;;
-        ws|wss|mws|mwss)
-            jq -n --arg t "$dtype" --arg p "${path:-/ws}" --arg h "$host" '
-                {type: $t, metadata: ({path: $p} + (if $h != "" then {host: $h} else {} end))}
-            '
             ;;
         *)
             jq -n --arg t "$dtype" '{type: $t}'
@@ -1231,6 +1260,7 @@ setup_antifilter_iran_panel() {
     fi
 
     select_transport_preset || return 1
+    echo -e "${YELLOW}Tip: if tunnel fails first time, rebuild both sides with TCP (preset 9), verify, then MWSS.${NC}"
     prompt_tls_certs "$domain" || return 0
 
     echo -e "\n${CYAN}Decoy website (recommended)${NC}"
@@ -1393,13 +1423,23 @@ setup_antifilter_foreign_node() {
     [[ ! "$target" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid target!${NC}"; return 1; }
 
     echo -e "\n${CYAN}Transport must match Iran panel${NC}"
+    echo -e "${YELLOW}Tip: for first test use TCP (option 9). Then switch to MWSS.${NC}"
     select_transport_preset || return 1
     path="$WS_PATH"
     host="$WS_HOST"
+    if [ -z "$host" ]; then
+        read -p "SNI / Host for TLS (Iran domain, recommended if dialing by IP): " host
+        WS_HOST="$host"
+    fi
+
+    # Remove previous antifilter node with same name to avoid duplicates
+    jq --arg n "antifilter-node-$name" --arg c "chain-antifilter-$name" \
+        'del(.services[]? | select(.name==$n)) | del(.chains[]? | select(.name==$c))' \
+        "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
 
     chain_name="chain-antifilter-$name"
     ch=$(jq -n --arg n "$chain_name" --arg addr "$server_addr" --arg tid "$tid" \
-        --argjson dialer "$(build_dialer_json "$DIALER_TYPE" "$path" "$host")" \
+        --argjson dialer "$(build_dialer_json "$DIALER_TYPE" "$path" "$host" "insecure")" \
         '{name:$n,hops:[{name:"hop-0",nodes:[{name:"node-0",addr:$addr,
           connector:{type:"tunnel",metadata:{"tunnel.id":$tid}},dialer:$dialer}]}]}')
     append_chain "$ch"
@@ -1416,14 +1456,98 @@ setup_antifilter_foreign_node() {
         --arg iran "$server_addr" --arg t "$target" --arg tr "$TRANSPORT_LABEL" \
         --arg path "$path" --arg host "$host" \
         '{role:$role,name:$name,tunnel_id:$tid,iran:$iran,target:$t,transport:$tr,ws_path:$path,ws_host:$host}')
-    # Keep panel state if present; otherwise write node state
     if [ ! -f "$ANTIFILTER_STATE" ] || [ "$(jq -r '.role // empty' "$ANTIFILTER_STATE")" != "iran-panel" ]; then
         save_antifilter_state "$node_state"
     fi
 
     restart_gost
-    echo -e "${GREEN}Foreign node '$name' connected → exposes $target via reverse tunnel.${NC}"
+    echo -e "${GREEN}Foreign node '$name' started → exposes $target via reverse tunnel.${NC}"
     echo -e "${DIM}Ensure local Xray/proxy is listening on $target.${NC}"
+    echo -e "${YELLOW}Check logs: journalctl -u gost -n 50 --no-pager${NC}"
+    echo -e "${YELLOW}If tunnel fails, run Anti-Filter → Doctor on both servers.${NC}"
+}
+
+setup_antifilter_doctor() {
+    require_gost || return 1
+    echo -e "${CYAN}--- Anti-Filter Doctor ---${NC}"
+    local role iran_addr tunnel_port entry_port tid target hostname domain
+    echo -e "1) This is Iran panel"
+    echo -e "2) This is Foreign node"
+    echo -e "0) Back"
+    read -p "Choice: " side
+    is_back_choice "$side" && return 0
+
+    echo -e "\n${CYAN}[1] Service status${NC}"
+    systemctl is-active gost 2>/dev/null || echo "gost not active"
+    systemctl is-active gost --quiet 2>/dev/null && echo -e "${GREEN}gost: active${NC}" || echo -e "${RED}gost: NOT active${NC}"
+
+    echo -e "\n${CYAN}[2] Config / state${NC}"
+    if [ -f "$ANTIFILTER_STATE" ]; then
+        jq -C . "$ANTIFILTER_STATE" 2>/dev/null || cat "$ANTIFILTER_STATE"
+        role=$(jq -r '.role // empty' "$ANTIFILTER_STATE")
+    else
+        echo -e "${YELLOW}No $ANTIFILTER_STATE${NC}"
+        role=""
+    fi
+
+    echo -e "\n${CYAN}[3] Listening ports (gost-related)${NC}"
+    ss -lntp 2>/dev/null | grep -E 'gost|:443|:8443|:80 ' || netstat -lntp 2>/dev/null | grep gost || true
+
+    echo -e "\n${CYAN}[4] Recent gost errors${NC}"
+    journalctl -u gost -n 40 --no-pager 2>/dev/null | tail -n 40
+
+    if [ "$side" = "1" ]; then
+        tunnel_port=$(jq -r '.tunnel_port // 8443' "$ANTIFILTER_STATE" 2>/dev/null)
+        entry_port=$(jq -r '.entry_port // 443' "$ANTIFILTER_STATE" 2>/dev/null)
+        domain=$(jq -r '.domain // empty' "$ANTIFILTER_STATE" 2>/dev/null)
+        echo -e "\n${CYAN}[5] Iran checks${NC}"
+        echo -e "Tunnel port should be public: $tunnel_port"
+        echo -e "Entry port (user SNI): $entry_port"
+        echo -e "Ingress rules:"
+        jq -r '.ingresses[]? | .rules[]? | "  \(.hostname) -> \(.endpoint)"' "$CONFIG_FILE" 2>/dev/null
+        echo -e "\nFrom FOREIGN node test:  ${YELLOW}nc -vz <IRAN_IP> $tunnel_port${NC}"
+        echo -e "User must connect with SNI/Host equal to an ingress hostname (e.g. trk01.$domain)."
+    elif [ "$side" = "2" ]; then
+        iran_addr=$(jq -r '.iran // empty' "$ANTIFILTER_STATE" 2>/dev/null)
+        tid=$(jq -r '.tunnel_id // empty' "$ANTIFILTER_STATE" 2>/dev/null)
+        target=$(jq -r '.target // empty' "$ANTIFILTER_STATE" 2>/dev/null)
+        [ -z "$iran_addr" ] && iran_addr=$(jq -r '.services[]? | select(.metadata.role=="antifilter-node") | .metadata.iran // empty' "$CONFIG_FILE" | head -n1)
+        [ -z "$tid" ] && tid=$(jq -r '.chains[]? | select(.name|startswith("chain-antifilter")) | .hops[0].nodes[0].connector.metadata["tunnel.id"] // empty' "$CONFIG_FILE" | head -n1)
+        [ -z "$target" ] && target=$(jq -r '.services[]? | select(.metadata.role=="antifilter-node") | .forwarder.nodes[0].addr // empty' "$CONFIG_FILE" | head -n1)
+
+        echo -e "\n${CYAN}[5] Foreign node checks${NC}"
+        echo -e "Iran addr : ${YELLOW}${iran_addr:-unknown}${NC}"
+        echo -e "Tunnel ID : ${YELLOW}${tid:-unknown}${NC}"
+        echo -e "Local tgt : ${YELLOW}${target:-unknown}${NC}"
+
+        if [ -n "$iran_addr" ]; then
+            local hip hport
+            hip="${iran_addr%:*}"; hport="${iran_addr##*:}"
+            echo -e "\nConnectivity to Iran tunnel port:"
+            if command -v nc &>/dev/null; then
+                nc -vz -w 5 "$hip" "$hport" 2>&1 || true
+            else
+                timeout 5 bash -c "echo >/dev/tcp/$hip/$hport" 2>&1 && echo "TCP OK" || echo -e "${RED}TCP FAIL to $hip:$hport${NC}"
+            fi
+        fi
+        if [ -n "$target" ]; then
+            local tip tport
+            tip="${target%:*}"; tport="${target##*:}"
+            echo -e "\nLocal target listening?"
+            ss -lntp 2>/dev/null | grep -E ":$tport\\b" || echo -e "${RED}Nothing listening on $target — start Xray/proxy there${NC}"
+        fi
+        echo -e "\nDialer in config:"
+        jq -c '.chains[]? | select(.name|startswith("chain-antifilter")) | .hops[0].nodes[0].dialer' "$CONFIG_FILE" 2>/dev/null
+    fi
+
+    echo -e "\n${CYAN}[6] Common fixes${NC}"
+    echo -e " • Transport Iran == Foreign (start with TCP to verify reverse, then MWSS)"
+    echo -e " • Tunnel ID must match an ingress endpoint on Iran"
+    echo -e " • Firewall: allow Iran tunnel port (default 8443) from foreign IP"
+    echo -e " • User SNI/Host must match ingress hostname (not path like /trk01)"
+    echo -e " • If dialing Iran by IP + TLS/MWSS: set SNI to panel domain"
+    echo -e " • Local target (Xray) must be up on foreign node before testing users"
+    echo -e "\n${YELLOW}Paste this Doctor output here if still broken.${NC}"
 }
 
 setup_antifilter_status() {
@@ -1450,6 +1574,7 @@ setup_antifilter_menu() {
         echo -e "${GREEN}3) Foreign node${NC}   — exit server dials Iran (no public port)"
         echo -e "4) Decoy site only"
         echo -e "5) Status"
+        echo -e "${YELLOW}6) Doctor${NC}         — diagnose broken tunnel"
         echo -e "0) Back"
         read -p "Choice: " c
         case $c in
@@ -1458,6 +1583,7 @@ setup_antifilter_menu() {
             3) setup_antifilter_foreign_node ;;
             4) setup_decoy_service ;;
             5) setup_antifilter_status ;;
+            6) setup_antifilter_doctor ;;
             0|q|Q|b|B) return 0 ;;
             *) echo -e "${RED}Invalid!${NC}" ;;
         esac
