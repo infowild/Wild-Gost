@@ -1051,22 +1051,388 @@ select_transport_preset() {
     return 0
 }
 
+detect_public_ipv4() {
+    curl -4 -fsS --connect-timeout 5 ifconfig.me 2>/dev/null \
+        || curl -4 -fsS --connect-timeout 5 icanhazip.com 2>/dev/null \
+        || curl -4 -fsS --connect-timeout 5 api.ipify.org 2>/dev/null \
+        || true
+}
+
+resolve_domain_ipv4() {
+    local domain="$1"
+    local ips=""
+    if command -v dig &>/dev/null; then
+        ips=$(dig +short A "$domain" 2>/dev/null | grep -E '^[0-9.]+$' | tr '\n' ' ')
+    fi
+    if [ -z "$ips" ] && command -v getent &>/dev/null; then
+        ips=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')
+    fi
+    if [ -z "$ips" ] && command -v host &>/dev/null; then
+        ips=$(host -t A "$domain" 2>/dev/null | awk '/has address/{print $NF}' | tr '\n' ' ')
+    fi
+    if [ -z "$ips" ] && command -v python3 &>/dev/null; then
+        ips=$(python3 - "$domain" <<'PY' 2>/dev/null
+import socket, sys
+try:
+    print(" ".join(sorted({i[4][0] for i in socket.getaddrinfo(sys.argv[1], None, socket.AF_INET)})))
+except Exception:
+    pass
+PY
+)
+    fi
+    echo "$ips" | xargs
+}
+
+wait_for_dns_point() {
+    # Arg1=domain. Shows this server's public IP, waits until DNS points here (or user forces).
+    local domain="$1"
+    local public_ip resolved attempt max_attempts=36
+    public_ip=$(detect_public_ipv4)
+    if [ -z "$public_ip" ]; then
+        echo -e "${YELLOW}Could not auto-detect public IP.${NC}"
+        prompt_or_back "This server public IPv4" || return 1
+        public_ip="$REPLY_VALUE"
+    fi
+    echo -e "\n${CYAN}DNS setup${NC}"
+    echo -e "  Domain     : ${GREEN}${domain}${NC}"
+    echo -e "  Point A to : ${GREEN}${public_ip}${NC}"
+    echo -e "  Record     : ${YELLOW}A  ${domain}  →  ${public_ip}${NC}"
+    echo -e "${DIM}After you create/update the DNS record, press Enter to check.${NC}"
+    read -p "Press Enter when DNS is pointed (or type skip to continue without check): " dns_go
+    if [ "$dns_go" = "skip" ] || [ "$dns_go" = "SKIP" ]; then
+        echo -e "${YELLOW}Skipping DNS check.${NC}"
+        return 0
+    fi
+    attempt=1
+    while [ "$attempt" -le "$max_attempts" ]; do
+        resolved=$(resolve_domain_ipv4 "$domain")
+        if echo " $resolved " | grep -q " ${public_ip} "; then
+            echo -e "${GREEN}DNS OK: ${domain} → ${public_ip}${NC}"
+            return 0
+        fi
+        if [ -n "$resolved" ]; then
+            echo -e "${YELLOW}[$attempt/$max_attempts] ${domain} resolves to: ${resolved} (want ${public_ip})${NC}"
+        else
+            echo -e "${YELLOW}[$attempt/$max_attempts] ${domain} not resolving yet...${NC}"
+        fi
+        read -p "Retry now (Enter), wait 10s (w), force continue (f), abort (0): " act
+        case "$act" in
+            0|q|Q|b|B) return 1 ;;
+            f|F) echo -e "${YELLOW}Continuing without confirmed DNS match.${NC}"; return 0 ;;
+            w|W) sleep 10 ;;
+            *) ;;
+        esac
+        attempt=$((attempt + 1))
+    done
+    echo -e "${RED}DNS still not pointing to ${public_ip}.${NC}"
+    read -p "Force continue anyway? (y/n) [n]: " force
+    [ "$force" = "y" ] || [ "$force" = "Y" ] || return 1
+    return 0
+}
+
+ensure_certbot() {
+    if command -v certbot &>/dev/null; then
+        return 0
+    fi
+    echo -e "${CYAN}Installing certbot...${NC}"
+    if command -v apt-get &>/dev/null; then
+        apt-get update && apt-get install -y certbot || return 1
+    elif command -v yum &>/dev/null; then
+        yum install -y certbot || return 1
+    elif command -v dnf &>/dev/null; then
+        dnf install -y certbot || return 1
+    else
+        echo -e "${RED}certbot not found and no supported package manager.${NC}"
+        return 1
+    fi
+    command -v certbot &>/dev/null
+}
+
+ensure_nginx() {
+    if command -v nginx &>/dev/null; then
+        return 0
+    fi
+    echo -e "${CYAN}Installing nginx...${NC}"
+    if command -v apt-get &>/dev/null; then
+        apt-get update && apt-get install -y nginx || return 1
+    elif command -v yum &>/dev/null; then
+        yum install -y nginx || return 1
+    elif command -v dnf &>/dev/null; then
+        dnf install -y nginx || return 1
+    else
+        echo -e "${RED}nginx not found and no supported package manager.${NC}"
+        return 1
+    fi
+    command -v nginx &>/dev/null
+}
+
+nginx_test_and_reload() {
+    nginx -t 2>/dev/null || { echo -e "${RED}nginx config test failed.${NC}"; nginx -t; return 1; }
+    systemctl enable nginx 2>/dev/null || true
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || true
+}
+
+free_port_80_for_nginx() {
+    # If GOST decoy holds :80, drop that service so nginx can own HTTP/ACME.
+    local busy_name
+    if ! port_listening 80; then
+        return 0
+    fi
+    # Already nginx?
+    if command -v ss &>/dev/null && ss -lntp 2>/dev/null | grep -E '[:.]80\b' | grep -qi nginx; then
+        return 0
+    fi
+    if [ -f "$CONFIG_FILE" ]; then
+        busy_name=$(jq -r '.services[]? | select(.addr==":80") | .name' "$CONFIG_FILE" | head -n1)
+        if [ -n "$busy_name" ]; then
+            echo -e "${YELLOW}:80 used by GOST service '${busy_name}' — moving decoy/ACME to nginx.${NC}"
+            jq 'del(.services[]? | select(.addr==":80"))' "$CONFIG_FILE" \
+                > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+            if [ -f "$ANTIFILTER_STATE" ]; then
+                jq '.decoy_port=""' "$ANTIFILTER_STATE" > /tmp/wild_af_tmp.json \
+                    && mv /tmp/wild_af_tmp.json "$ANTIFILTER_STATE"
+            fi
+            restart_gost
+            sleep 1
+        fi
+    fi
+    if port_listening 80; then
+        if command -v ss &>/dev/null && ss -lntp 2>/dev/null | grep -E '[:.]80\b' | grep -qi nginx; then
+            return 0
+        fi
+        echo -e "${RED}Port 80 is still in use by another process. Free it for nginx, then retry.${NC}"
+        ss -lntp 2>/dev/null | grep -E '[:.]80\b' || true
+        return 1
+    fi
+    return 0
+}
+
+setup_nginx_acme_site() {
+    # Arg1=domain Arg2=webroot. Writes HTTP site for ACME + decoy page.
+    local domain="$1"
+    local webroot="$2"
+    local conf_available conf_enabled conf
+    ensure_decoy_site "$webroot" >/dev/null
+    mkdir -p "$webroot/.well-known/acme-challenge"
+    chmod -R a+rX "$webroot"
+
+    if [ -d /etc/nginx/sites-available ]; then
+        conf_available="/etc/nginx/sites-available/wild-gost-${domain}.conf"
+        conf_enabled="/etc/nginx/sites-enabled/wild-gost-${domain}.conf"
+        conf="$conf_available"
+    else
+        mkdir -p /etc/nginx/conf.d
+        conf="/etc/nginx/conf.d/wild-gost-${domain}.conf"
+        conf_available="$conf"
+        conf_enabled=""
+    fi
+
+    cat > "$conf" <<EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+
+    root ${webroot};
+    index index.html;
+
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        allow all;
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+}
+EOF
+
+    if [ -n "$conf_enabled" ]; then
+        ln -sfn "$conf_available" "$conf_enabled"
+        # Avoid default site stealing :80
+        if [ -L /etc/nginx/sites-enabled/default ]; then
+            rm -f /etc/nginx/sites-enabled/default
+        fi
+    fi
+    nginx_test_and_reload || return 1
+    echo -e "${GREEN}nginx HTTP site ready for ${domain} (ACME + decoy on :80).${NC}"
+}
+
+install_certbot_gost_renew_hook() {
+    local hook_dir="/etc/letsencrypt/renewal-hooks/deploy"
+    local hook="$hook_dir/wild-gost-reload.sh"
+    mkdir -p "$hook_dir"
+    cat > "$hook" <<'HOOK'
+#!/usr/bin/env bash
+# Reload GOST after Let's Encrypt renew so new certs are picked up.
+systemctl reload gost 2>/dev/null || systemctl restart gost 2>/dev/null || true
+systemctl reload nginx 2>/dev/null || true
+HOOK
+    chmod +x "$hook"
+}
+
+port_listening() {
+    local port="$1"
+    if command -v ss &>/dev/null; then
+        ss -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${port}$" && return 0
+    fi
+    if command -v netstat &>/dev/null; then
+        netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${port}$" && return 0
+    fi
+    return 1
+}
+
+obtain_letsencrypt_cert() {
+    # Arg1=domain. Uses nginx :80 + webroot ACME. Sets TLS_CERT_FILE / TLS_KEY_FILE.
+    local domain="${1:-}"
+    local email live_cert live_key gost_dir webroot
+    TLS_CERT_FILE=""
+    TLS_KEY_FILE=""
+
+    if [ -z "$domain" ] || [ "$domain" = "localhost" ] || [ "$domain" = "decoy.local" ]; then
+        prompt_or_back "Domain for certificate (e.g. panel.example.com)" || return 1
+        domain="$REPLY_VALUE"
+    else
+        read -p "Domain for certificate [$domain]: " d2
+        [ -n "$d2" ] && domain="$d2"
+    fi
+    [ -z "$domain" ] && { echo -e "${RED}Domain required.${NC}"; return 1; }
+
+    wait_for_dns_point "$domain" || return 1
+    ensure_nginx || return 1
+    ensure_certbot || return 1
+
+    webroot="${DECOY_DIR}"
+    ensure_decoy_site "$webroot" >/dev/null
+
+    read -p "Email for Let's Encrypt expiry notices (optional, Enter to skip): " email
+    echo -e "\n${CYAN}Using nginx on :80 for ACME challenge + decoy page (gost stays up).${NC}"
+    free_port_80_for_nginx || return 1
+    setup_nginx_acme_site "$domain" "$webroot" || return 1
+
+    read -p "Issue certificate now? (y/n) [y]: " go
+    [ -z "$go" ] && go="y"
+    [ "$go" != "y" ] && [ "$go" != "Y" ] && return 1
+
+    local certbot_args=(certonly --webroot -w "$webroot"
+        -d "$domain" --non-interactive --agree-tos --keep-until-expiring)
+    if [ -n "$email" ]; then
+        certbot_args+=(--email "$email")
+    else
+        certbot_args+=(--register-unsafely-without-email)
+    fi
+
+    echo -e "${CYAN}Running certbot (nginx webroot) for ${domain}...${NC}"
+    if ! certbot "${certbot_args[@]}"; then
+        echo -e "${RED}certbot failed.${NC}"
+        echo -e "${YELLOW}Common causes: DNS not pointed, port 80 blocked/firewalled, or Let's Encrypt unreachable.${NC}"
+        return 1
+    fi
+
+    live_cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
+    live_key="/etc/letsencrypt/live/${domain}/privkey.pem"
+    if [ ! -f "$live_cert" ] || [ ! -f "$live_key" ]; then
+        echo -e "${RED}Cert files missing under /etc/letsencrypt/live/${domain}/${NC}"
+        return 1
+    fi
+
+    gost_dir="/etc/gost/certs"
+    mkdir -p "$gost_dir"
+    cp -f "$live_cert" "$gost_dir/${domain}.fullchain.pem"
+    cp -f "$live_key" "$gost_dir/${domain}.key"
+    chmod 644 "$gost_dir/${domain}.fullchain.pem"
+    chmod 600 "$gost_dir/${domain}.key"
+
+    install_certbot_gost_renew_hook
+    local sync_hook="/etc/letsencrypt/renewal-hooks/deploy/wild-gost-sync-certs.sh"
+    cat > "$sync_hook" <<'HOOK'
+#!/usr/bin/env bash
+DST="/etc/gost/certs"
+mkdir -p "$DST"
+for live in /etc/letsencrypt/live/*; do
+  [ -d "$live" ] || continue
+  domain=$(basename "$live")
+  [ "$domain" = "README" ] && continue
+  if [ -f "$live/fullchain.pem" ] && [ -f "$live/privkey.pem" ]; then
+    cp -f "$live/fullchain.pem" "$DST/${domain}.fullchain.pem"
+    cp -f "$live/privkey.pem" "$DST/${domain}.key"
+    chmod 644 "$DST/${domain}.fullchain.pem"
+    chmod 600 "$DST/${domain}.key"
+  fi
+done
+HOOK
+    chmod +x "$sync_hook"
+
+    TLS_CERT_FILE="$gost_dir/${domain}.fullchain.pem"
+    TLS_KEY_FILE="$gost_dir/${domain}.key"
+    echo -e "${GREEN}Certificate ready.${NC}"
+    echo -e "  Cert : ${YELLOW}${TLS_CERT_FILE}${NC}"
+    echo -e "  Key  : ${YELLOW}${TLS_KEY_FILE}${NC}"
+    echo -e "  nginx: ${YELLOW}:80${NC} → ACME + decoy (${webroot})"
+    echo -e "${DIM}Renewal: certbot renew → sync certs + reload gost/nginx.${NC}"
+    return 0
+}
+
+apply_tls_certs_to_config() {
+    # Patch all listeners that already have tls.certFile, or antifilter tunnel service.
+    local cert="$1" key="$2"
+    [ -f "$CONFIG_FILE" ] || return 1
+    [ -n "$cert" ] && [ -n "$key" ] || return 1
+    jq --arg c "$cert" --arg k "$key" '
+      (.services // []) |= map(
+        if (.listener.tls != null) or (.metadata.role == "antifilter-panel") then
+          .listener.tls = ((.listener.tls // {}) + {certFile: $c, keyFile: $k})
+        else . end
+      )' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+    if [ -f "$ANTIFILTER_STATE" ]; then
+        jq --arg c "$cert" --arg k "$key" '.cert_file=$c | .key_file=$k' \
+            "$ANTIFILTER_STATE" > /tmp/wild_af_tmp.json && mv /tmp/wild_af_tmp.json "$ANTIFILTER_STATE"
+    fi
+}
+
+setup_tls_cert_wizard() {
+    echo -e "${CYAN}--- TLS certificate (Let's Encrypt via nginx) ---${NC}"
+    echo -e "Ask domain → you point DNS → nginx serves ACME on :80 → cert placed for GOST."
+    local domain=""
+    if [ -f "$ANTIFILTER_STATE" ]; then
+        domain=$(jq -r '.domain // empty' "$ANTIFILTER_STATE")
+    fi
+    prompt_tls_certs "${domain:-localhost}" || return 0
+    if [ -z "$TLS_CERT_FILE" ] || [ -z "$TLS_KEY_FILE" ]; then
+        echo -e "${YELLOW}No cert selected.${NC}"
+        return 0
+    fi
+    read -p "Apply these paths to current GOST antifilter/TLS listeners? (y/n) [y]: " apply
+    [ -z "$apply" ] && apply="y"
+    if [ "$apply" = "y" ] || [ "$apply" = "Y" ]; then
+        apply_tls_certs_to_config "$TLS_CERT_FILE" "$TLS_KEY_FILE"
+        restart_gost
+        echo -e "${GREEN}Config updated and gost restarted.${NC}"
+    else
+        echo -e "${DIM}Paths set for this session only: $TLS_CERT_FILE${NC}"
+    fi
+}
+
 prompt_tls_certs() {
-    # Sets TLS_CERT_FILE / TLS_KEY_FILE. Arg1=domain for CN when generating.
+    # Sets TLS_CERT_FILE / TLS_KEY_FILE. Arg1=domain for CN / ACME.
     local domain="${1:-localhost}"
     local choice cert_dir
     TLS_CERT_FILE=""
     TLS_KEY_FILE=""
     echo -e "\n${CYAN}TLS certificate:${NC}"
-    echo -e "1) Provide existing cert/key paths"
-    echo -e "2) Generate self-signed (quick test)"
-    echo -e "3) Skip (GOST auto / plain)"
+    echo -e "1) ${GREEN}Let's Encrypt + nginx${NC} — domain → DNS → nginx :80 ACME → place cert for GOST"
+    echo -e "2) Provide existing cert/key paths"
+    echo -e "3) Generate self-signed (quick test)"
+    echo -e "4) Skip (GOST auto / plain)"
     echo -e "0) Back"
     read -p "Choice [1]: " choice
     [ -z "$choice" ] && choice="1"
     is_back_choice "$choice" && return 1
     case $choice in
         1)
+            obtain_letsencrypt_cert "$domain" || return 1
+            ;;
+        2)
             prompt_or_back "Fullchain / cert.pem path" || return 1
             TLS_CERT_FILE="$REPLY_VALUE"
             prompt_or_back "Private key path" || return 1
@@ -1076,7 +1442,7 @@ prompt_tls_certs() {
                 return 1
             fi
             ;;
-        2)
+        3)
             if ! command -v openssl &>/dev/null; then
                 echo -e "${RED}openssl not found.${NC}"
                 return 1
@@ -1095,7 +1461,7 @@ prompt_tls_certs() {
             chmod 600 "$TLS_KEY_FILE"
             echo -e "${GREEN}Self-signed cert written to $TLS_CERT_FILE${NC}"
             ;;
-        3) ;;
+        4) ;;
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
     return 0
@@ -1305,19 +1671,25 @@ setup_antifilter_iran_panel() {
 
     if [ "$want_decoy" = "y" ] || [ "$want_decoy" = "Y" ]; then
         decoy_port="80"
-        local port_busy
-        port_busy=$(jq -r --arg p ":$decoy_port" '.services[]? | select(.addr == $p) | .name' "$CONFIG_FILE")
-        if [ -z "$port_busy" ]; then
-            decoy_name="antifilter-decoy-80"
-            local dh dl
-            dh=$(build_handler_json "file" "" "" "$(jq -n --arg d "$decoy_dir" '{dir: $d}')")
-            dl=$(jq -n '{type:"tcp"}')
-            svc=$(jq -n --arg n "$decoy_name" --arg a ":$decoy_port" --argjson h "$dh" --argjson l "$dl" \
-                '{name:$n,addr:$a,handler:$h,listener:$l,metadata:{role:"antifilter-decoy"}}')
-            append_service "$svc"
+        # Prefer nginx on :80 (ACME-friendly). Fall back to GOST file listener.
+        if ensure_nginx 2>/dev/null && free_port_80_for_nginx 2>/dev/null \
+            && setup_nginx_acme_site "$domain" "$decoy_dir" 2>/dev/null; then
+            echo -e "${GREEN}Decoy on nginx :80 → $decoy_dir${NC}"
         else
-            echo -e "${YELLOW}:80 already used by $port_busy — skip decoy listener (site still at $decoy_dir).${NC}"
-            decoy_port=""
+            local port_busy
+            port_busy=$(jq -r --arg p ":$decoy_port" '.services[]? | select(.addr == $p) | .name' "$CONFIG_FILE")
+            if [ -z "$port_busy" ] && ! port_listening 80; then
+                decoy_name="antifilter-decoy-80"
+                local dh dl
+                dh=$(build_handler_json "file" "" "" "$(jq -n --arg d "$decoy_dir" '{dir: $d}')")
+                dl=$(jq -n '{type:"tcp"}')
+                svc=$(jq -n --arg n "$decoy_name" --arg a ":$decoy_port" --argjson h "$dh" --argjson l "$dl" \
+                    '{name:$n,addr:$a,handler:$h,listener:$l,metadata:{role:"antifilter-decoy"}}')
+                append_service "$svc"
+            else
+                echo -e "${YELLOW}:80 busy — skip GOST decoy (site files still at $decoy_dir).${NC}"
+                decoy_port=""
+            fi
         fi
     fi
 
@@ -1575,6 +1947,7 @@ setup_antifilter_menu() {
         echo -e "4) Decoy site only"
         echo -e "5) Status"
         echo -e "${YELLOW}6) Doctor${NC}         — diagnose broken tunnel"
+        echo -e "${GREEN}7) TLS cert${NC}       — Let's Encrypt via nginx (:80 ACME) → place for GOST"
         echo -e "0) Back"
         read -p "Choice: " c
         case $c in
@@ -1584,6 +1957,7 @@ setup_antifilter_menu() {
             4) setup_decoy_service ;;
             5) setup_antifilter_status ;;
             6) setup_antifilter_doctor ;;
+            7) setup_tls_cert_wizard ;;
             0|q|Q|b|B) return 0 ;;
             *) echo -e "${RED}Invalid!${NC}" ;;
         esac
