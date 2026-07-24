@@ -3383,13 +3383,50 @@ logs_menu() {
 
 uninstall_gost() {
     echo -e "${CYAN}--- Complete Uninstall ---${NC}"
-    echo -e "${YELLOW}This removes binary, menu script, systemd unit, temp files,${NC}"
-    echo -e "${YELLOW}AND /etc/gost (all tunnels, chains, policies, certs, API/metrics config).${NC}"
-    read -p "Completely uninstall Wild GOST and wipe all related data? (y/n): " confirm
+    echo -e "${YELLOW}This removes:${NC}"
+    echo -e "${YELLOW}  • gost binary, wild / gost-manage.sh, systemd unit${NC}"
+    echo -e "${YELLOW}  • /etc/gost (tunnels, chains, policies, certs, anti-filter state)${NC}"
+    echo -e "${YELLOW}  • decoy webroot, wild-gost nginx sites, certbot renew hooks${NC}"
+    echo -e "${YELLOW}Does NOT remove system packages nginx/certbot if used elsewhere,${NC}"
+    echo -e "${YELLOW}or Let's Encrypt live certs under /etc/letsencrypt/live (optional wipe below).${NC}"
+    read -p "Completely uninstall Wild GOST and wipe related data? (y/n): " confirm
     if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
         echo -e "${YELLOW}Cancelled.${NC}"
         return 0
     fi
+
+    local wipe_le="n"
+    read -p "Also delete Let's Encrypt certs issued for Wild GOST domains? (y/n) [n]: " wipe_le
+    [ -z "$wipe_le" ] && wipe_le="n"
+
+    # Collect domains from our nginx sites / antifilter state before deleting them
+    local domains_tmp
+    domains_tmp=$(mktemp)
+    if [ -f "$ANTIFILTER_STATE" ]; then
+        jq -r '.domain // empty' "$ANTIFILTER_STATE" 2>/dev/null >> "$domains_tmp"
+    fi
+    for f in /etc/nginx/sites-available/wild-gost-*.conf \
+             /etc/nginx/sites-enabled/wild-gost-*.conf \
+             /etc/nginx/conf.d/wild-gost-*.conf; do
+        [ -e "$f" ] || continue
+        # server_name line(s)
+        awk '/server_name/ {
+            for (i = 2; i <= NF; i++) {
+                gsub(/;/, "", $i)
+                if ($i != "" && $i != "_") print $i
+            }
+        }' "$f" 2>/dev/null >> "$domains_tmp"
+        # filename wild-gost-DOMAIN.conf
+        basename "$f" | sed -E 's/^wild-gost-(.+)\.conf$/\1/' >> "$domains_tmp"
+    done
+    if [ -d /etc/gost/certs ]; then
+        for f in /etc/gost/certs/*.fullchain.pem; do
+            [ -e "$f" ] || continue
+            basename "$f" .fullchain.pem >> "$domains_tmp"
+        done
+    fi
+    sort -u "$domains_tmp" | grep -E '.' > "${domains_tmp}.u" 2>/dev/null || true
+    mv "${domains_tmp}.u" "$domains_tmp" 2>/dev/null || true
 
     echo -e "${CYAN}Stopping gost process...${NC}"
     if command -v systemctl &>/dev/null; then
@@ -3397,13 +3434,11 @@ uninstall_gost() {
         systemctl kill gost &>/dev/null || true
         systemctl disable gost &>/dev/null || true
     fi
-    # Force-kill leftover processes (service may have failed to stop)
     if command -v pkill &>/dev/null; then
         pkill -x gost &>/dev/null || true
         sleep 1
         pkill -9 -x gost &>/dev/null || true
     else
-        # Fallback: kill by pattern if pkill is unavailable
         for pid in $(ps -eo pid,comm 2>/dev/null | awk '$2=="gost"{print $1}'); do
             kill "$pid" &>/dev/null || true
         done
@@ -3428,19 +3463,51 @@ uninstall_gost() {
     rm -f /usr/local/bin/gost
     rm -f /usr/local/bin/gost-manage.sh
     rm -f /usr/local/bin/wild
-    # Defensive: remove common alternate copies if present
-    rm -f /usr/bin/gost-manage.sh /usr/bin/wild
+    rm -f /usr/bin/gost /usr/bin/gost-manage.sh /usr/bin/wild
+
+    echo -e "${CYAN}Removing Wild GOST nginx sites (if any)...${NC}"
+    rm -f /etc/nginx/sites-available/wild-gost-*.conf 2>/dev/null || true
+    rm -f /etc/nginx/sites-enabled/wild-gost-*.conf 2>/dev/null || true
+    rm -f /etc/nginx/conf.d/wild-gost-*.conf 2>/dev/null || true
+    if command -v nginx &>/dev/null; then
+        nginx -t &>/dev/null && {
+            systemctl reload nginx &>/dev/null || systemctl restart nginx &>/dev/null || true
+        } || true
+    fi
+
+    echo -e "${CYAN}Removing certbot renew hooks created by Wild GOST...${NC}"
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/wild-gost-reload.sh 2>/dev/null || true
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/wild-gost-sync-certs.sh 2>/dev/null || true
+
+    if [ "$wipe_le" = "y" ] || [ "$wipe_le" = "Y" ]; then
+        echo -e "${CYAN}Removing Let's Encrypt certs for detected Wild GOST domains...${NC}"
+        local d
+        while read -r d; do
+            [ -z "$d" ] && continue
+            [[ "$d" == *"."* ]] || continue
+            if command -v certbot &>/dev/null; then
+                certbot delete --cert-name "$d" --non-interactive 2>/dev/null || true
+            fi
+            rm -rf "/etc/letsencrypt/live/$d" \
+                   "/etc/letsencrypt/archive/$d" \
+                   "/etc/letsencrypt/renewal/$d.conf" 2>/dev/null || true
+            echo -e "  removed LE artifacts for ${YELLOW}$d${NC}"
+        done < "$domains_tmp"
+    fi
+    rm -f "$domains_tmp"
 
     echo -e "${CYAN}Removing temporary files...${NC}"
-    rm -f /tmp/gost_config_tmp.json
+    rm -f /tmp/gost_config_tmp.json /tmp/wild_af_tmp.json
     rm -rf /tmp/gost_install
-    rm -f /tmp/gost.tar.gz /tmp/gost_*.json 2>/dev/null || true
+    rm -f /tmp/gost.tar.gz /tmp/gost_*.json /tmp/gost_*.err /tmp/gost_*.yaml \
+          /tmp/gost_edit_*.json /tmp/gost_jq_err.txt /tmp/gost-logs.txt \
+          /tmp/gost_cfg_check.* 2>/dev/null || true
 
-    echo -e "${CYAN}Removing configuration, tunnels, chains, policies, and certs...${NC}"
-    # Always wipe /etc/gost so leftover tunnels/chains/bypass/admission/limiter/
-    # resolvers/ingresses/api/metrics/anti-filter state cannot survive uninstall.
+    echo -e "${CYAN}Removing configuration, tunnels, chains, policies, certs, decoy...${NC}"
     rm -rf /etc/gost
     rm -rf "$DECOY_DIR" 2>/dev/null || true
+    # Extra decoy path safety if variable somehow empty
+    rm -rf /var/www/wild-gost-decoy 2>/dev/null || true
 
     echo -e "${CYAN}Verifying cleanup...${NC}"
     local leftover=0
@@ -3449,15 +3516,32 @@ uninstall_gost() {
         /usr/local/bin/gost \
         /usr/local/bin/gost-manage.sh \
         /usr/local/bin/wild \
+        /usr/bin/gost \
+        /usr/bin/gost-manage.sh \
+        /usr/bin/wild \
         /etc/gost \
+        /var/www/wild-gost-decoy \
         /etc/systemd/system/gost.service \
         /etc/systemd/system/multi-user.target.wants/gost.service \
         /etc/systemd/system/gost.service.d \
+        /etc/letsencrypt/renewal-hooks/deploy/wild-gost-reload.sh \
+        /etc/letsencrypt/renewal-hooks/deploy/wild-gost-sync-certs.sh \
         /tmp/gost_install \
         /tmp/gost_config_tmp.json
     do
         if [ -e "$path" ]; then
             echo -e "${RED}  Still present: $path${NC}"
+            leftover=1
+        fi
+    done
+
+    # Glob leftovers for nginx wild-gost configs
+    local nf
+    for nf in /etc/nginx/sites-available/wild-gost-*.conf \
+              /etc/nginx/sites-enabled/wild-gost-*.conf \
+              /etc/nginx/conf.d/wild-gost-*.conf; do
+        if [ -e "$nf" ]; then
+            echo -e "${RED}  Still present: $nf${NC}"
             leftover=1
         fi
     done
@@ -3468,7 +3552,8 @@ uninstall_gost() {
     fi
 
     if [ "$leftover" -eq 0 ]; then
-        echo -e "${GREEN}Wild GOST was completely uninstalled. Nothing related remains.${NC}"
+        echo -e "${GREEN}Wild GOST was completely uninstalled. Script-related items are gone.${NC}"
+        echo -e "${DIM}Note: system nginx/certbot packages (if installed) were left in place.${NC}"
     else
         echo -e "${YELLOW}Uninstall finished, but some items could not be removed (see above).${NC}"
         echo -e "${YELLOW}Remove them manually if needed.${NC}"
