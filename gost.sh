@@ -191,6 +191,36 @@ fetch_url() {
     return 1
 }
 
+# Direct curl (no GitHub-mirror prefix). Use for go.dev / non-GitHub hosts.
+fetch_url_direct() {
+    local url="$1" output="$2"
+    if [ -n "$output" ]; then
+        curl -fL --connect-timeout 20 --max-time 600 "$url" -o "$output" 2>/dev/null && return 0
+    else
+        curl -fsSL --connect-timeout 20 --max-time 120 "$url" 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+# Download a file trying several absolute URLs (first success wins).
+fetch_url_any() {
+    local output="$1"
+    shift
+    local u
+    for u in "$@"; do
+        [ -z "$u" ] && continue
+        echo -e "${DIM}try: $u${NC}"
+        if fetch_url_direct "$u" "$output"; then
+            return 0
+        fi
+        # Also try GH mirrors in case URL is githubusercontent / github
+        if fetch_url "$u" "$output"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 detect_gost_cpu_arch() {
     local arch cpu_arch=""
     arch=$(uname -m)
@@ -262,9 +292,20 @@ ensure_go_toolchain() {
         386) go_arch="386" ;;
         *) echo -e "${RED}No automatic Go tarball for arch $cpu_arch — install Go 1.26+ manually.${NC}"; return 1 ;;
     esac
+    local go_ver="1.26.5"
+    local go_file="go${go_ver}.linux-${go_arch}.tar.gz"
     mkdir -p /tmp/gost_go_install
-    if ! fetch_url "https://go.dev/dl/go1.26.5.linux-${go_arch}.tar.gz" /tmp/gost_go_install/go.tgz; then
-        echo -e "${RED}Failed to download Go toolchain.${NC}"
+    # go.dev is often blocked in Iran; try CN / Aliyun / direct go.dev
+    if ! fetch_url_any /tmp/gost_go_install/go.tgz \
+        "https://mirrors.aliyun.com/golang/${go_file}" \
+        "https://golang.google.cn/dl/${go_file}" \
+        "https://studygolang.com/dl/golang/${go_file}" \
+        "https://go.dev/dl/${go_file}"; then
+        echo -e "${RED}Failed to download Go toolchain (go.dev / mirrors blocked).${NC}"
+        echo -e "${YELLOW}Workaround: build on Server B (Outside), then:${NC}"
+        echo -e "  scp /usr/local/bin/gost root@<IRAN_IP>:/tmp/gost-masque-fixed"
+        echo -e "  On Iran: Install menu → option 4 (local binary) or:"
+        echo -e "  sudo install -m 755 /tmp/gost-masque-fixed /usr/local/bin/gost"
         rm -rf /tmp/gost_go_install
         return 1
     fi
@@ -275,15 +316,31 @@ ensure_go_toolchain() {
     go version || return 1
 }
 
+git_clone_mirrored() {
+    # $1 repo URL (https://github.com/org/repo.git)  $2 dest dir
+    local repo="$1" dest="$2" prefix url
+    rm -rf "$dest"
+    for prefix in "${GH_MIRRORS[@]}"; do
+        url="${prefix}${repo}"
+        echo -e "${DIM}git clone $url${NC}"
+        if git clone --depth 1 "$url" "$dest" 2>/dev/null; then
+            return 0
+        fi
+        rm -rf "$dest"
+    done
+    # last try direct
+    git clone --depth 1 "$repo" "$dest"
+}
+
 # Build gost with MASQUE TCP CONNECT fix (empty Proto on standard CONNECT).
 install_gost_masque_patched() {
     ensure_go_toolchain || return 1
     echo -e "${CYAN}Cloning go-gost/gost + go-gost/x and applying MASQUE TCP CONNECT patch...${NC}"
     rm -rf /tmp/gost-build /tmp/x-build
-    if ! git clone --depth 1 https://github.com/go-gost/gost.git /tmp/gost-build; then
+    if ! git_clone_mirrored "https://github.com/go-gost/gost.git" /tmp/gost-build; then
         echo -e "${RED}git clone gost failed.${NC}"; return 1
     fi
-    if ! git clone --depth 1 https://github.com/go-gost/x.git /tmp/x-build; then
+    if ! git_clone_mirrored "https://github.com/go-gost/x.git" /tmp/x-build; then
         echo -e "${RED}git clone x failed.${NC}"; return 1
     fi
     if ! grep -q 'Proto:  "HTTP/3.0"' /tmp/x-build/connector/masque/connector.go 2>/dev/null; then
@@ -295,11 +352,13 @@ install_gost_masque_patched() {
     fi
     (
         cd /tmp/gost-build || exit 1
+        export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
         go mod edit -replace=github.com/go-gost/x=/tmp/x-build
         go mod tidy
         CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/gost-masque-fixed ./cmd/gost
     ) || {
         echo -e "${RED}Build failed.${NC}"
+        echo -e "${YELLOW}If on Iran, prefer building on Server B and Install → option 4 (local binary).${NC}"
         return 1
     }
     if [ ! -f /tmp/gost-masque-fixed ]; then
@@ -308,6 +367,22 @@ install_gost_masque_patched() {
     fi
     install -m 755 /tmp/gost-masque-fixed /usr/local/bin/gost
     echo -e "${GREEN}MASQUE-patched gost installed.${NC}"
+    /usr/local/bin/gost -V
+}
+
+install_gost_from_local_binary() {
+    local path="${1:-}"
+    if [ -z "$path" ]; then
+        read -p "Path to gost binary [/tmp/gost-masque-fixed]: " path
+        [ -z "$path" ] && path="/tmp/gost-masque-fixed"
+    fi
+    if [ ! -f "$path" ]; then
+        echo -e "${RED}File not found: $path${NC}"
+        echo -e "${YELLOW}On Server B: scp /usr/local/bin/gost root@<IRAN>:/tmp/gost-masque-fixed${NC}"
+        return 1
+    fi
+    install -m 755 "$path" /usr/local/bin/gost
+    echo -e "${GREEN}Installed local binary:${NC}"
     /usr/local/bin/gost -V
 }
 
@@ -359,7 +434,8 @@ install_gost() {
     echo -e "\n${CYAN}Install / update channel:${NC}"
     echo -e "1) Latest stable (releases/latest) — no MASQUE on ≤3.2.6"
     echo -e "2) Latest nightly — registers masque (TCP CONNECT may still need patch)"
-    echo -e "3) Build MASQUE-patched from source ${GREEN}(recommended for MASQUE TCP)${NC}"
+    echo -e "3) Build MASQUE-patched from source ${GREEN}(recommended; needs Go download)${NC}"
+    echo -e "4) Install from local binary ${GREEN}(e.g. /tmp/gost-masque-fixed from Server B)${NC}"
     echo -e "0) Back"
     read -p "Choice [3]: " ch
     [ -z "$ch" ] && ch="3"
@@ -389,10 +465,13 @@ install_gost() {
             echo -e "${GREEN}Latest nightly: $ver${NC}"
             release_json=$(echo "$release_json" | jq --arg t "$ver" '[.[] | select(.tag_name==$t)][0]')
             install_gost_binary_from_release_json "$release_json" "nightly" || return 1
-            echo -e "${YELLOW}If MASQUE TCP fails with H3 error 270, reinstall with option 3 (patched).${NC}"
+            echo -e "${YELLOW}If MASQUE TCP fails with H3 error 270, reinstall with option 3 or 4 (patched).${NC}"
             ;;
         3)
             install_gost_masque_patched || return 1
+            ;;
+        4)
+            install_gost_from_local_binary || return 1
             ;;
         *)
             echo -e "${RED}Invalid!${NC}"
