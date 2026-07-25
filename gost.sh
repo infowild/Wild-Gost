@@ -25,6 +25,7 @@ DIALER_TYPE="tcp"
 WS_PATH=""
 WS_HOST=""
 TRANSPORT_LABEL=""
+TRANSPORT_IS_MASQUE=0
 TLS_CERT_FILE=""
 TLS_KEY_FILE=""
 
@@ -132,6 +133,14 @@ check_dependencies() {
             yum install -y jq
         fi
     fi
+    if ! command -v git &>/dev/null; then
+        echo -e "${YELLOW}git is not installed. Installing (needed for MASQUE-patched build)...${NC}"
+        if command -v apt-get &>/dev/null; then
+            apt-get update && apt-get install -y git
+        elif command -v yum &>/dev/null; then
+            yum install -y git
+        fi
+    fi
 }
 
 create_systemd_service() {
@@ -182,21 +191,9 @@ fetch_url() {
     return 1
 }
 
-install_gost() {
-    check_dependencies
-    select_server_location
-    echo -e "${CYAN}Fetching the latest GOST release info...${NC}"
-    release_json=$(fetch_url "https://api.github.com/repos/go-gost/gost/releases/latest")
-    latest_ver=$(echo "$release_json" | jq -r .tag_name 2>/dev/null)
-    if [ -z "$latest_ver" ] || [ "$latest_ver" = "null" ]; then
-        echo -e "${RED}Failed to fetch the latest version from GitHub.${NC}"
-        echo -e "${YELLOW}If you are on an Iranian server, re-run and choose option 2 (Iran) for mirror downloads.${NC}"
-        return 1
-    fi
-    echo -e "${GREEN}Latest version found: $latest_ver${NC}"
-
+detect_gost_cpu_arch() {
+    local arch cpu_arch=""
     arch=$(uname -m)
-    cpu_arch=""
     case $arch in
         x86_64) cpu_arch="amd64" ;;
         aarch64|arm64) cpu_arch="arm64" ;;
@@ -207,31 +204,114 @@ install_gost() {
         riscv64) cpu_arch="riscv64" ;;
         *) echo -e "${RED}Unsupported CPU architecture: $arch${NC}"; return 1 ;;
     esac
+    echo "$cpu_arch"
+}
 
+install_gost_binary_from_release_json() {
+    local release_json="$1"
+    local label="${2:-release}"
+    local cpu_arch download_url ver
+    cpu_arch=$(detect_gost_cpu_arch) || return 1
+    ver=$(echo "$release_json" | jq -r .tag_name 2>/dev/null)
     download_url=$(echo "$release_json" | jq -r --arg cpu "$cpu_arch" \
         '.assets[] | select(.name | test("_linux_" + $cpu + "\\.tar\\.gz$")) | .browser_download_url' | head -n 1)
-
     if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
-        echo -e "${RED}No suitable download found for your architecture.${NC}"
+        echo -e "${RED}No suitable $label download for arch $cpu_arch.${NC}"
         return 1
     fi
-
-    echo -e "${CYAN}Downloading: $download_url${NC}"
+    echo -e "${CYAN}Downloading ($label): $download_url${NC}"
     mkdir -p /tmp/gost_install
     if ! fetch_url "$download_url" /tmp/gost_install/gost.tar.gz; then
-        echo -e "${RED}Download failed. Check your network access to GitHub (or its mirrors).${NC}"
+        echo -e "${RED}Download failed. Check GitHub / mirror access.${NC}"
         rm -rf /tmp/gost_install
         return 1
     fi
     if ! tar -xzf /tmp/gost_install/gost.tar.gz -C /tmp/gost_install; then
-        echo -e "${RED}Failed to extract the downloaded archive.${NC}"
+        echo -e "${RED}Failed to extract archive.${NC}"
         rm -rf /tmp/gost_install
         return 1
     fi
-    mv /tmp/gost_install/gost /usr/local/bin/gost
-    chmod +x /usr/local/bin/gost
+    if [ ! -f /tmp/gost_install/gost ]; then
+        echo -e "${RED}Binary 'gost' not found in archive.${NC}"
+        rm -rf /tmp/gost_install
+        return 1
+    fi
+    install -m 755 /tmp/gost_install/gost /usr/local/bin/gost
     rm -rf /tmp/gost_install
+    echo -e "${GREEN}Installed binary tag: ${ver:-unknown}${NC}"
+}
 
+ensure_go_toolchain() {
+    export PATH="/usr/local/go/bin:$PATH"
+    if command -v go >/dev/null 2>&1; then
+        local gv
+        gv=$(go version 2>/dev/null || true)
+        if echo "$gv" | grep -Eq 'go1\.(2[6-9]|[3-9][0-9])'; then
+            echo -e "${GREEN}Using $gv${NC}"
+            return 0
+        fi
+        echo -e "${YELLOW}System Go is too old for current gost ($gv). Installing Go 1.26.5...${NC}"
+    else
+        echo -e "${CYAN}Installing Go 1.26.5 toolchain...${NC}"
+    fi
+    local cpu_arch go_arch="amd64"
+    cpu_arch=$(detect_gost_cpu_arch) || return 1
+    case "$cpu_arch" in
+        amd64) go_arch="amd64" ;;
+        arm64) go_arch="arm64" ;;
+        386) go_arch="386" ;;
+        *) echo -e "${RED}No automatic Go tarball for arch $cpu_arch — install Go 1.26+ manually.${NC}"; return 1 ;;
+    esac
+    mkdir -p /tmp/gost_go_install
+    if ! fetch_url "https://go.dev/dl/go1.26.5.linux-${go_arch}.tar.gz" /tmp/gost_go_install/go.tgz; then
+        echo -e "${RED}Failed to download Go toolchain.${NC}"
+        rm -rf /tmp/gost_go_install
+        return 1
+    fi
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf /tmp/gost_go_install/go.tgz
+    rm -rf /tmp/gost_go_install
+    export PATH="/usr/local/go/bin:$PATH"
+    go version || return 1
+}
+
+# Build gost with MASQUE TCP CONNECT fix (empty Proto on standard CONNECT).
+install_gost_masque_patched() {
+    ensure_go_toolchain || return 1
+    echo -e "${CYAN}Cloning go-gost/gost + go-gost/x and applying MASQUE TCP CONNECT patch...${NC}"
+    rm -rf /tmp/gost-build /tmp/x-build
+    if ! git clone --depth 1 https://github.com/go-gost/gost.git /tmp/gost-build; then
+        echo -e "${RED}git clone gost failed.${NC}"; return 1
+    fi
+    if ! git clone --depth 1 https://github.com/go-gost/x.git /tmp/x-build; then
+        echo -e "${RED}git clone x failed.${NC}"; return 1
+    fi
+    if ! grep -q 'Proto:  "HTTP/3.0"' /tmp/x-build/connector/masque/connector.go 2>/dev/null; then
+        echo -e "${YELLOW}Patch marker not found (upstream may have fixed it). Continuing build anyway.${NC}"
+    else
+        sed -i 's/Proto:  "HTTP\/3.0",/\/\/ wild-gost: empty Proto = standard CONNECT (not Extended CONNECT)/' \
+            /tmp/x-build/connector/masque/connector.go
+        echo -e "${GREEN}Applied MASQUE TCP CONNECT Proto patch.${NC}"
+    fi
+    (
+        cd /tmp/gost-build || exit 1
+        go mod edit -replace=github.com/go-gost/x=/tmp/x-build
+        go mod tidy
+        CGO_ENABLED=0 go build -ldflags="-s -w" -o /tmp/gost-masque-fixed ./cmd/gost
+    ) || {
+        echo -e "${RED}Build failed.${NC}"
+        return 1
+    }
+    if [ ! -f /tmp/gost-masque-fixed ]; then
+        echo -e "${RED}Patched binary missing after build.${NC}"
+        return 1
+    fi
+    install -m 755 /tmp/gost-masque-fixed /usr/local/bin/gost
+    echo -e "${GREEN}MASQUE-patched gost installed.${NC}"
+    /usr/local/bin/gost -V
+}
+
+finish_gost_install_wrappers() {
     ensure_config
     create_systemd_service
 
@@ -253,9 +333,75 @@ fi
 EOF
     chmod +x /usr/local/bin/wild
 
-    echo -e "${GREEN}GOST installed successfully! Version: $latest_ver${NC}"
-    echo -e "${GREEN}From now on you can open this menu anytime by typing ${YELLOW}wild gost${GREEN}.${NC}"
-    /usr/local/bin/gost -V
+    echo -e "${GREEN}From now on open this menu with: ${YELLOW}wild gost${NC}"
+    /usr/local/bin/gost -V 2>/dev/null || true
+}
+
+gost_supports_masque_handler() {
+    command -v gost >/dev/null 2>&1 || return 1
+    gost -L 'masque+http3://:1' -O yaml 2>/dev/null | grep -q 'type: masque'
+}
+
+warn_if_masque_unusable() {
+    if ! gost_supports_masque_handler; then
+        echo -e "${RED}This gost binary has no MASQUE handler (stable ≤3.2.6 or incomplete build).${NC}"
+        echo -e "${YELLOW}Install → option 2 (nightly) or 3 (MASQUE-patched build).${NC}"
+        return 1
+    fi
+    echo -e "${YELLOW}Note: stock nightly may still break TCP CONNECT (H3 error 270).${NC}"
+    echo -e "${YELLOW}For Remote Port Forward over MASQUE, prefer Install → option 3 (patched).${NC}"
+    return 0
+}
+
+install_gost() {
+    check_dependencies
+    select_server_location
+    echo -e "\n${CYAN}Install / update channel:${NC}"
+    echo -e "1) Latest stable (releases/latest) — no MASQUE on ≤3.2.6"
+    echo -e "2) Latest nightly — registers masque (TCP CONNECT may still need patch)"
+    echo -e "3) Build MASQUE-patched from source ${GREEN}(recommended for MASQUE TCP)${NC}"
+    echo -e "0) Back"
+    read -p "Choice [3]: " ch
+    [ -z "$ch" ] && ch="3"
+    is_back_choice "$ch" && return 0
+
+    local release_json ver
+    case $ch in
+        1)
+            echo -e "${CYAN}Fetching latest stable...${NC}"
+            release_json=$(fetch_url "https://api.github.com/repos/go-gost/gost/releases/latest")
+            ver=$(echo "$release_json" | jq -r .tag_name 2>/dev/null)
+            if [ -z "$ver" ] || [ "$ver" = "null" ]; then
+                echo -e "${RED}Failed to fetch latest release.${NC}"
+                return 1
+            fi
+            echo -e "${GREEN}Latest stable: $ver${NC}"
+            install_gost_binary_from_release_json "$release_json" "stable" || return 1
+            ;;
+        2)
+            echo -e "${CYAN}Fetching recent releases for nightly...${NC}"
+            release_json=$(fetch_url "https://api.github.com/repos/go-gost/gost/releases?per_page=15")
+            ver=$(echo "$release_json" | jq -r '[.[] | select(.tag_name|test("nightly";"i"))][0].tag_name // empty' 2>/dev/null)
+            if [ -z "$ver" ]; then
+                echo -e "${RED}No nightly tag found.${NC}"
+                return 1
+            fi
+            echo -e "${GREEN}Latest nightly: $ver${NC}"
+            release_json=$(echo "$release_json" | jq --arg t "$ver" '[.[] | select(.tag_name==$t)][0]')
+            install_gost_binary_from_release_json "$release_json" "nightly" || return 1
+            echo -e "${YELLOW}If MASQUE TCP fails with H3 error 270, reinstall with option 3 (patched).${NC}"
+            ;;
+        3)
+            install_gost_masque_patched || return 1
+            ;;
+        *)
+            echo -e "${RED}Invalid!${NC}"
+            return 1
+            ;;
+    esac
+
+    finish_gost_install_wrappers
+    echo -e "${GREEN}GOST install/update finished.${NC}"
 }
 
 # ---------- helpers ----------
@@ -412,13 +558,15 @@ select_dialer_transport() {
     WS_PATH=""
     WS_HOST=""
     TRANSPORT_LABEL="TCP"
+    TRANSPORT_IS_MASQUE=0
     echo -e "\n${CYAN}Select dialer / chain transport:${NC}"
     echo -e " 1) tcp   2) tls   3) ws    4) wss   5) mws   6) mwss ${GREEN}(recommended)${NC}"
     echo -e " 7) kcp   8) quic  9) grpc 10) http2 11) http3 12) h2"
     echo -e "13) h3   14) ssh  15) sshd 16) dtls  17) icmp  18) pht"
     echo -e "19) ohttp 20) otls 21) ftcp 22) mtcp 23) mtls  24) utls"
+    echo -e "25) h3-masque ${GREEN}(MASQUE client dialer)${NC}"
     echo -e " 0) Back"
-    read -p "Your choice (0-24) [default: 6]: " tchoice
+    read -p "Your choice (0-25) [default: 6]: " tchoice
     [ -z "$tchoice" ] && tchoice="6"
     is_back_choice "$tchoice" && return 1
     case $tchoice in
@@ -446,6 +594,7 @@ select_dialer_transport() {
         22) DIALER_TYPE="mtcp"; TRANSPORT_LABEL="mTCP" ;;
         23) DIALER_TYPE="mtls"; TRANSPORT_LABEL="mTLS" ;;
         24) DIALER_TYPE="utls"; TRANSPORT_LABEL="uTLS" ;;
+        25) DIALER_TYPE="h3-masque"; TRANSPORT_LABEL="H3-MASQUE"; TRANSPORT_IS_MASQUE=1 ;;
         *) echo -e "${RED}Invalid choice!${NC}"; return 1 ;;
     esac
     case "$DIALER_TYPE" in
@@ -454,7 +603,7 @@ select_dialer_transport() {
             [ -z "$WS_PATH" ] && WS_PATH="/ws"
             read -p "Host / SNI (optional): " WS_HOST
             ;;
-        tls|utls|mtls)
+        tls|utls|mtls|h3-masque)
             read -p "TLS serverName / SNI (optional): " WS_HOST
             ;;
     esac
@@ -470,6 +619,10 @@ build_listener_json() {
     case "$ltype" in
         ws|wss|mws|mwss)
             base=$(jq -n --arg t "$ltype" --arg p "${path:-/ws}" '{type: $t, metadata: {path: $p}}')
+            ;;
+        http3)
+            # Required for MASQUE CONNECT-UDP; harmless default for plain http3
+            base=$(jq -n --arg t "$ltype" '{type: $t, metadata: {enableDatagrams: true}}')
             ;;
         *)
             base=$(jq -n --arg t "$ltype" '{type: $t}')
@@ -521,7 +674,7 @@ build_dialer_json() {
                 '
             fi
             ;;
-        grpc|quic|otls|http2|http3|h2|h3)
+        grpc|quic|otls|http2|http3|h2|h3|h3-masque)
             if [ "$insecure" = "insecure" ]; then
                 jq -n --arg t "$dtype" --arg h "$host" '
                     {type: $t, tls: ({secure: false} + (if $h != "" then {serverName: $h} else {} end))}
@@ -696,7 +849,16 @@ add_proxy_service() {
     prompt_or_back "Listening port (e.g. 1080 or 443)" || return 0
     port="$REPLY_VALUE"
     validate_listen_port "$port" || return 1
-    select_listener_transport || return 1
+    if [ "$handler_type" = "masque" ]; then
+        warn_if_masque_unusable || return 1
+        LISTENER_TYPE="http3"
+        TRANSPORT_LABEL="MASQUE/http3"
+        WS_PATH=""
+        echo -e "${GREEN}MASQUE requires listener http3 (not h3/PHT). Auto-selected.${NC}"
+        echo -e "${YELLOW}Firewall: allow UDP :$port${NC}"
+    else
+        select_listener_transport || return 1
+    fi
 
     if [ "$handler_type" = "ss" ]; then
         read -p "Shadowsocks method [aes-256-gcm]: " ss_method
@@ -1009,6 +1171,7 @@ select_transport_preset() {
     WS_PATH=""
     WS_HOST=""
     TRANSPORT_LABEL="Plain TCP"
+    TRANSPORT_IS_MASQUE=0
     echo -e "\n${CYAN}Anti-DPI transport preset:${NC}"
     echo -e "1) MWSS   ${GREEN}(recommended — TLS+WS+mux)${NC}"
     echo -e "2) WSS    (TLS + WebSocket)"
@@ -1020,6 +1183,7 @@ select_transport_preset() {
     echo -e "8) gRPC"
     echo -e "9) TCP    (no encryption)"
     echo -e "10) Advanced (pick listener + dialer separately)"
+    echo -e "11) MASQUE ${GREEN}(HTTP/3 — listener http3 + dialer h3-masque)${NC}"
     echo -e "0) Back"
     read -p "Choice [1]: " c
     [ -z "$c" ] && c="1"
@@ -1045,6 +1209,17 @@ select_transport_preset() {
            select_listener_transport || return 1
            select_dialer_transport || return 1
            TRANSPORT_LABEL="${LISTENER_TYPE}/${DIALER_TYPE}"
+           [ "$DIALER_TYPE" = "h3-masque" ] && TRANSPORT_IS_MASQUE=1
+           ;;
+        11)
+           # CRITICAL: use http3 (real HTTP/3), NEVER h3 (PHT)
+           LISTENER_TYPE="http3"
+           DIALER_TYPE="h3-masque"
+           TRANSPORT_LABEL="MASQUE"
+           TRANSPORT_IS_MASQUE=1
+           read -p "SNI / serverName (optional): " WS_HOST
+           echo -e "${YELLOW}MASQUE uses UDP/HTTP3. Open the listen port/udp on Server B firewall.${NC}"
+           echo -e "${YELLOW}Do NOT use listener type h3 (that is PHT, not MASQUE).${NC}"
            ;;
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
@@ -1974,10 +2149,10 @@ setup_remote_port_forward_upstream() {
     local port handler_choice handler_type udp_enabled name svc meta="" loc_label
     prompt_config_name "Name" "upstream" || return 0
     name="$REPLY_VALUE"
-    prompt_or_back "Listen port (e.g. 443)" || return 0
+    prompt_or_back "Listen port (e.g. 443 or 9443)" || return 0
     port="$REPLY_VALUE"
     validate_listen_port "$port" || return 1
-    echo -e "1) Relay  2) SOCKS5  3) HTTP  0) Back"
+    echo -e "1) Relay  2) SOCKS5  3) HTTP  4) MASQUE ${GREEN}(HTTP/3)${NC}  0) Back"
     read -p "Choice [1]: " handler_choice
     [ -z "$handler_choice" ] && handler_choice="1"
     is_back_choice "$handler_choice" && return 0
@@ -1985,9 +2160,29 @@ setup_remote_port_forward_upstream() {
         1) handler_type="relay" ;;
         2) handler_type="socks5" ;;
         3) handler_type="http" ;;
+        4)
+            handler_type="masque"
+            warn_if_masque_unusable || return 1
+            LISTENER_TYPE="http3"
+            DIALER_TYPE="h3-masque"
+            TRANSPORT_LABEL="MASQUE"
+            TRANSPORT_IS_MASQUE=1
+            WS_PATH=""
+            WS_HOST=""
+            echo -e "${GREEN}MASQUE: listener forced to http3 + enableDatagrams (not h3/PHT).${NC}"
+            echo -e "${YELLOW}Firewall: allow UDP :$port on this server.${NC}"
+            ;;
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
-    select_transport_preset || return 1
+    if [ "$handler_type" != "masque" ]; then
+        select_transport_preset || return 1
+        if [ "$TRANSPORT_IS_MASQUE" = "1" ]; then
+            echo -e "${YELLOW}Transport MASQUE selected — switching handler to masque + listener http3.${NC}"
+            handler_type="masque"
+            LISTENER_TYPE="http3"
+            warn_if_masque_unusable || return 1
+        fi
+    fi
     prompt_auth || return 1
     udp_enabled="n"
     if [ "$handler_type" = "socks5" ] || [ "$handler_type" = "http" ]; then
@@ -2014,6 +2209,9 @@ setup_remote_port_forward_upstream() {
     append_service "$svc"
     restart_gost
     echo -e "${GREEN}Upstream '$loc_label' on :$port ($TRANSPORT_LABEL)${NC}"
+    if [ "$handler_type" = "masque" ]; then
+        echo -e "${CYAN}Entry side: connector=masque, dialer=h3-masque, upstream=${YELLOW}<this-ip>:$port${NC}"
+    fi
 }
 
 setup_remote_port_forward_entry() {
@@ -2034,17 +2232,32 @@ setup_remote_port_forward_entry() {
         2) handler_type="udp"; listener_type="udp" ;;
         *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
     esac
-    echo -e "Connector: 1) relay  2) socks5  3) http  0) Back"
-    read -p "Choice [1]: " c
-    [ -z "$c" ] && c="1"
-    is_back_choice "$c" && return 0
-    case $c in
-        1) connector_type="relay" ;;
-        2) connector_type="socks5" ;;
-        3) connector_type="http" ;;
-        *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
-    esac
+
     select_transport_preset || return 1
+    if [ "$TRANSPORT_IS_MASQUE" = "1" ]; then
+        connector_type="masque"
+        DIALER_TYPE="h3-masque"
+        warn_if_masque_unusable || return 1
+        echo -e "${GREEN}MASQUE entry: connector=masque, dialer=h3-masque${NC}"
+    else
+        echo -e "Connector: 1) relay  2) socks5  3) http  4) masque  0) Back"
+        read -p "Choice [1]: " c
+        [ -z "$c" ] && c="1"
+        is_back_choice "$c" && return 0
+        case $c in
+            1) connector_type="relay" ;;
+            2) connector_type="socks5" ;;
+            3) connector_type="http" ;;
+            4)
+                connector_type="masque"
+                DIALER_TYPE="h3-masque"
+                TRANSPORT_IS_MASQUE=1
+                warn_if_masque_unusable || return 1
+                ;;
+            *) echo -e "${RED}Invalid!${NC}"; return 1 ;;
+        esac
+    fi
+
     prompt_or_back "Upstream host:port (Server B)" || return 0
     upstream_addr="$REPLY_VALUE"
     [[ ! "$upstream_addr" =~ ^[^[:space:]:]+:[0-9]+$ ]] && { echo -e "${RED}Invalid!${NC}"; return 1; }
@@ -2101,6 +2314,12 @@ setup_multi_port_location_entry() {
     esac
 
     select_transport_preset || return 1
+    if [ "$TRANSPORT_IS_MASQUE" = "1" ]; then
+        connector_type="masque"
+        DIALER_TYPE="h3-masque"
+        warn_if_masque_unusable || return 1
+        echo -e "${GREEN}MASQUE multi-entry: connector forced to masque + h3-masque${NC}"
+    fi
 
     locs_tmp=$(mktemp)
     echo '[]' > "$locs_tmp"
@@ -2844,6 +3063,13 @@ edit_selected_service() {
                     rtcp|rudp|red|redu|tun|tap|tungo|dns)
                         jq --argjson i "$index" --arg t "$HANDLER_PICK" '.services[$i].listener.type = $t' \
                             "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                        ;;
+                    masque)
+                        # Force real HTTP/3 listener — never h3 (PHT)
+                        jq --argjson i "$index" '
+                            .services[$i].listener = {type:"http3", metadata:{enableDatagrams:true}}
+                        ' "$CONFIG_FILE" > /tmp/gost_config_tmp.json && mv /tmp/gost_config_tmp.json "$CONFIG_FILE"
+                        echo -e "${YELLOW}Listener forced to http3 + enableDatagrams for MASQUE.${NC}"
                         ;;
                 esac
                 restart_gost
