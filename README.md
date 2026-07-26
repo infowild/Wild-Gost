@@ -56,18 +56,9 @@ sudo wild gost
 
 همه آموزش‌های فارسی اینجا هستند:
 
-**→ [docs/README.md](docs/README.md)**
+**→ [docs/README.md](docs/README.md)** (۱۴ موضوع، فایل جدا)
 
-| موضوع | لینک |
-|:---|:---|
-| منوی اسکریپت | [docs/fa/01-overview-menu.md](docs/fa/01-overview-menu.md) |
-| نصب | [docs/fa/02-install.md](docs/fa/02-install.md) |
-| انتخاب نوع تونل | [docs/fa/03-choose-tunnel.md](docs/fa/03-choose-tunnel.md) |
-| Anti-Filter | [docs/fa/04-antifilter.md](docs/fa/04-antifilter.md) |
-| تونل MWSS دو سرور | [docs/fa/05-remote-forward.md](docs/fa/05-remote-forward.md) |
-| تونل MASQUE | [docs/fa/06-masque.md](docs/fa/06-masque.md) |
-| پروکسی / فوروارد / Reverse | [docs/fa/07-proxy-local-reverse.md](docs/fa/07-proxy-local-reverse.md) |
-| Edit و عیب‌یابی | [docs/fa/08-edit-logs.md](docs/fa/08-edit-logs.md) |
+پوشش: منو · نصب · انتخاب تونل · Anti-Filter · MWSS · MASQUE · پروکسی · Multi-entry · DNS/TUN/File · Transportها · decoy/TLS/Doctor · Edit/Advanced · انواع Proxy
 
 ### هسته GOST
 
@@ -119,18 +110,9 @@ sudo wild gost
 
 ### Tutorials (separate pages)
 
-**→ [docs/README.md](docs/README.md)**
+**→ [docs/README.md](docs/README.md)** (14 topics, one file each)
 
-| Topic | Link |
-|:---|:---|
-| Menu overview | [docs/en/01-overview-menu.md](docs/en/01-overview-menu.md) |
-| Install | [docs/en/02-install.md](docs/en/02-install.md) |
-| Choosing a tunnel | [docs/en/03-choose-tunnel.md](docs/en/03-choose-tunnel.md) |
-| Anti-Filter | [docs/en/04-antifilter.md](docs/en/04-antifilter.md) |
-| Two-server MWSS | [docs/en/05-remote-forward.md](docs/en/05-remote-forward.md) |
-| MASQUE | [docs/en/06-masque.md](docs/en/06-masque.md) |
-| Proxy / forward / reverse | [docs/en/07-proxy-local-reverse.md](docs/en/07-proxy-local-reverse.md) |
-| Edit & debugging | [docs/en/08-edit-logs.md](docs/en/08-edit-logs.md) |
+Covers: menu · install · tunnel choice · Anti-Filter · MWSS · MASQUE · proxy · multi-entry · DNS/TUN/File · transports · decoy/TLS/Doctor · Edit/Advanced · proxy types
 
 ### GOST core
 
