@@ -1,205 +1,264 @@
 # Wild GOST
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![GOST](https://img.shields.io/badge/GOST-v3-green)](https://github.com/go-gost/gost)
-[![Docs](https://img.shields.io/badge/Docs-14_guides-informational)](docs/README.md)
+<p align="center">
+  <strong>Management panel for <a href="https://github.com/go-gost/gost">GOST v3</a></strong><br>
+  Install · Tunnel · Proxy · TLS · Logs · Uninstall
+</p>
 
-[English](#english) · [فارسی](#فارسی) · [Docs](docs/README.md)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
+  <a href="https://github.com/go-gost/gost"><img src="https://img.shields.io/badge/GOST-v3-green" alt="GOST"></a>
+  <a href="docs/README.md"><img src="https://img.shields.io/badge/Docs-14_guides-informational" alt="Docs"></a>
+</p>
 
-Linux menu for [GOST v3](https://github.com/go-gost/gost): install, tunnels, proxy, TLS, logs, uninstall — JSON under `/etc/gost`.
+<p align="center">
+  <a href="#english">English</a> ·
+  <a href="#فارسی">فارسی</a> ·
+  <a href="docs/README.md">Documentation</a>
+</p>
 
 ---
 
 ## فارسی
 
-### نصب
+پنل تعاملی لینوکس برای GOST v3. کانفیگ در `/etc/gost/config.json`.
+
+### نصب سریع
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/infowild/Wild-Gost/master/gost.sh)
+```
+
+```bash
 sudo wild gost
 ```
 
-نیاز: Linux · root · `curl`/`wget` · `jq` · `systemctl`
+| پیش‌نیاز | |
+|:---|:---|
+| OS | Linux |
+| دسترسی | root |
+| ابزار | `curl` یا `wget` · `jq` · `systemctl` |
 
-### منو
+### معماری
 
-| # | بخش | کار |
+```text
+┌─────────────┐         tunnel          ┌─────────────┐
+│  Client     │ ──────► │ Server A │ ───────────────► │ Server B │ ──► Target
+│             │   listen │  (Entry) │   MWSS/MASQUE   │(Upstream)│     e.g. panel
+└─────────────┘         └──────────┘                  └──────────┘
+```
+
+Anti-Filter معکوس است: نود خارج به ایران dial می‌کند؛ کلاینت فقط ایران را می‌بیند.
+
+### منوی اصلی
+
+| # | بخش | شرح |
 |:---:|:---|:---|
-| 1 | Install / Update | Stable · Nightly · بیلد پچ MASQUE · باینری محلی |
-| 2 | Add | Anti-Filter · Upstream · Entry · Multi · Proxy · Forward · Reverse · More |
-| 3 | Edit | سرویس و chain |
-| 4 | Remove | حذف یک سرویس |
-| 5 | List | فهرست سرویس‌ها |
-| 6 | Service | start / stop / restart / status |
-| 7 | Logs | لاگ زنده · خطا · validate |
-| 8 | Advanced | Bypass · Admission · Limiter · API · Metrics · Raw JSON |
-| 9 | Uninstall | باینری · `/etc/gost` · decoy · nginx `wild-gost-*` · هوک certbot · اختیاری LE/Go |
+| **1** | Install / Update | Stable · Nightly · MASQUE-patched · Local binary |
+| **2** | Add | ساخت سرویس و تونل |
+| **3** | Edit | ویرایش سرویس و chain |
+| **4** | Remove | حذف یک سرویس |
+| **5** | List | فهرست سرویس‌ها |
+| **6** | Service | start · stop · restart · status |
+| **7** | Logs | لاگ زنده · خطا · validate |
+| **8** | Advanced | Bypass · Admission · Limiter · API · Metrics · Raw JSON |
+| **9** | Uninstall | پاکسازی باینری، کانفیگ، decoy، nginx، هوک‌ها |
+| **0** | Exit | خروج |
+
+#### Add → جزئیات
+
+| # | گزینه | کاربرد |
+|:---:|:---|:---|
+| 1 | **Anti-Filter** | ریورس ایران · SNI · decoy · نود خارج |
+| 2 | **Upstream** | Server B — سمت خروج تونل |
+| 3 | **Entry** | Server A — listen کلاینت |
+| 4 | **Multi** | چند پورت / چند لوکیشن |
+| 5 | **Proxy** | SOCKS · HTTP · SS · Relay · MASQUE · … |
+| 6 | **Local forward** | listen → target روی همین هاست |
+| 7 | **Reverse** | tunnel · rtcp · rudp |
+| 8 | **More** | DNS · TUN · File · Redirect |
 
 ### سناریوها
 
-| سناریو | مسیر منو | نقش‌ها |
+| سناریو | مسیر | نکات |
 |:---|:---|:---|
-| Anti-Filter | `2 → 1` | ایران = پنل ریورس · خارج = نود · کلاینت با SNI |
-| دو سرور (MWSS و مشابه) | `2 → 2` سپس `2 → 3` | B = Upstream · A = Entry → `127.0.0.1:port` |
-| دو سرور MASQUE | همان + transport `11` | B: `masque`+`http3` (UDP) · A: `masque`+`h3-masque` |
-| چند پورت / چند لوکیشن | `2 → 4` | چند B · پورت جدا یا selector |
-| پروکسی تک‌سرور | `2 → 5` | SOCKS / HTTP / SS / Relay / MASQUE / … |
-| فوروارد محلی | `2 → 6` | listen → target روی همین هاست |
-| Reverse | `2 → 7` | tunnel / rtcp / rudp |
-| DNS · TUN · File · Redirect | `2 → 8` | سرویس‌های جانبی |
+| Anti-Filter | `2 → 1` | ایران = پنل · خارج = نود · کلاینت با SNI |
+| دو سرور MWSS | `2 → 2` سپس `2 → 3` | اول B، بعد A · path یکسان |
+| دو سرور MASQUE | همان + transport `11` | UDP · B:`http3` · A:`h3-masque` |
+| Multi-entry | `2 → 4` | پورت جدا یا selector |
+| Proxy تک‌سرور | `2 → 5` | بدون تونل دوم |
+| Forward محلی | `2 → 6` | فقط remap پورت |
+| Reverse | `2 → 7` | پشت NAT |
+| DNS / TUN / File | `2 → 8` | سرویس جانبی |
 
-### کانال نصب (منو `1`)
+### کانال‌های نصب
 
-| گزینه | خروجی |
-|:---:|:---|
-| 1 Stable | ریلیز پایدار — بدون MASQUE قابل‌اتکا |
-| 2 Nightly | masque ثبت‌شده؛ TCP CONNECT ممکن است باگ داشته باشد |
-| 3 Build patched | بیلد + پچ MASQUE — پیشنهادی برای تونل HTTP/3 |
-| 4 Local binary | نصب از مسیر محلی (مثلاً `/tmp/gost-masque-fixed`) |
+| # | کانال | توصیه |
+|:---:|:---|:---|
+| 1 | **Stable** | استفاده عادی — برای MASQUE مناسب نیست |
+| 2 | **Nightly** | masque ثبت‌شده؛ TCP CONNECT ممکن است ناپایدار باشد |
+| 3 | **Build patched** | بیلد + پچ MASQUE — مناسب تونل HTTP/3 |
+| 4 | **Local binary** | نصب از فایل (مثلاً `scp` از خارج به ایران) |
 
-Stable روی باینری پچ‌شده = شکست MASQUE.
+> Update با Stable روی باینری پچ‌شده، MASQUE را می‌شکند.
 
 ### Transport
 
 | Preset | لایه |
 |:---|:---|
-| MWSS | TLS + WebSocket + mux |
-| WSS / TLS / uTLS / otls | استتار TLS |
-| KCP / QUIC / gRPC | UDP یا gRPC |
-| TCP | تست |
-| **MASQUE** | HTTP/3 · listener=`http3` (نه `h3`) · dialer=`h3-masque` |
+| **MWSS** | TLS + WebSocket + mux |
+| WSS · TLS · uTLS · otls | استتار TLS |
+| KCP · QUIC · gRPC | UDP / gRPC |
+| TCP | فقط تست |
+| **MASQUE** | HTTP/3 · listener `http3` · dialer `h3-masque` |
 
-دو سر تونل باید transport یکسان داشته باشند.
+دو سر تونل = همان transport · برای WS/WSS/MWSS همان path.
 
-### مسیرها
+### مسیرهای سیستم
 
-| مسیر | محتوا |
+| مسیر | نقش |
 |:---|:---|
 | `/usr/local/bin/gost` | باینری |
-| `/usr/local/bin/wild` | منو (`wild gost`) |
-| `/etc/gost/config.json` | کانفیگ |
-| `/etc/gost/wild-antifilter.json` | state پنل Anti-Filter |
+| `/usr/local/bin/wild` | ورود به منو |
+| `/etc/gost/config.json` | کانفیگ اصلی |
+| `/etc/gost/wild-antifilter.json` | state Anti-Filter |
 | `/var/www/wild-gost-decoy` | decoy |
-| `/etc/nginx/.../wild-gost-*.conf` | ACME / decoy nginx |
+| `/etc/nginx/.../wild-gost-*.conf` | ACME / decoy |
 
-### آموزش
+### مستندات
 
-| # | موضوع |
-|:---:|:---|
-| [01](docs/fa/01-overview-menu.md) | منو |
-| [02](docs/fa/02-install.md) | نصب |
-| [03](docs/fa/03-choose-tunnel.md) | انتخاب تونل |
-| [04](docs/fa/04-antifilter.md) | Anti-Filter |
-| [05](docs/fa/05-remote-forward.md) | MWSS دو سرور |
-| [06](docs/fa/06-masque.md) | MASQUE |
-| [07](docs/fa/07-proxy-local-reverse.md) | Proxy / Forward / Reverse |
-| [08](docs/fa/08-edit-logs.md) | Edit / Logs |
-| [09](docs/fa/09-multi-entry.md) | Multi-entry |
-| [10](docs/fa/10-dns-tun-file-redirect.md) | DNS / TUN / File / Redirect |
-| [11](docs/fa/11-transports.md) | Transportها |
-| [12](docs/fa/12-antifilter-extras.md) | decoy / TLS / Doctor |
-| [13](docs/fa/13-edit-advanced.md) | Advanced / Uninstall |
-| [14](docs/fa/14-proxy-types.md) | انواع Proxy |
+| | | |
+|:---:|:---|:---|
+| [01 منو](docs/fa/01-overview-menu.md) | [02 نصب](docs/fa/02-install.md) | [03 انتخاب تونل](docs/fa/03-choose-tunnel.md) |
+| [04 Anti-Filter](docs/fa/04-antifilter.md) | [05 MWSS](docs/fa/05-remote-forward.md) | [06 MASQUE](docs/fa/06-masque.md) |
+| [07 Proxy / Reverse](docs/fa/07-proxy-local-reverse.md) | [08 Edit / Logs](docs/fa/08-edit-logs.md) | [09 Multi-entry](docs/fa/09-multi-entry.md) |
+| [10 DNS / TUN](docs/fa/10-dns-tun-file-redirect.md) | [11 Transport](docs/fa/11-transports.md) | [12 Decoy / TLS](docs/fa/12-antifilter-extras.md) |
+| [13 Advanced](docs/fa/13-edit-advanced.md) | [14 انواع Proxy](docs/fa/14-proxy-types.md) | [فهرست](docs/README.md) |
 
-فهرست کامل: [docs/README.md](docs/README.md) · هسته: [gost.run](https://gost.run)
+هستهٔ پروتکل‌ها: [gost.run](https://gost.run)
 
 ---
 
 ## English
 
-### Install
+Interactive Linux panel for GOST v3. Config lives in `/etc/gost/config.json`.
+
+### Quick install
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/infowild/Wild-Gost/master/gost.sh)
+```
+
+```bash
 sudo wild gost
 ```
 
-Requires: Linux · root · `curl`/`wget` · `jq` · `systemctl`
+| Requirement | |
+|:---|:---|
+| OS | Linux |
+| Access | root |
+| Tools | `curl` or `wget` · `jq` · `systemctl` |
 
-### Menu
+### Architecture
 
-| # | Section | Action |
+```text
+┌─────────────┐         tunnel          ┌─────────────┐
+│  Client     │ ──────► │ Server A │ ───────────────► │ Server B │ ──► Target
+│             │   listen │  (Entry) │   MWSS/MASQUE   │(Upstream)│     e.g. panel
+└─────────────┘         └──────────┘                  └──────────┘
+```
+
+Anti-Filter is reversed: the exit node dials Iran; clients only see Iran.
+
+### Main menu
+
+| # | Section | Description |
 |:---:|:---|:---|
-| 1 | Install / Update | Stable · Nightly · MASQUE-patched build · local binary |
-| 2 | Add | Anti-Filter · Upstream · Entry · Multi · Proxy · Forward · Reverse · More |
-| 3 | Edit | Service & chain |
-| 4 | Remove | Delete one service |
-| 5 | List | List services |
-| 6 | Service | start / stop / restart / status |
-| 7 | Logs | Live · errors · validate |
-| 8 | Advanced | Bypass · Admission · Limiter · API · Metrics · Raw JSON |
-| 9 | Uninstall | Binary · `/etc/gost` · decoy · nginx `wild-gost-*` · certbot hooks · optional LE/Go |
+| **1** | Install / Update | Stable · Nightly · MASQUE-patched · Local binary |
+| **2** | Add | Create services and tunnels |
+| **3** | Edit | Edit service & chain |
+| **4** | Remove | Delete one service |
+| **5** | List | List services |
+| **6** | Service | start · stop · restart · status |
+| **7** | Logs | Live · errors · validate |
+| **8** | Advanced | Bypass · Admission · Limiter · API · Metrics · Raw JSON |
+| **9** | Uninstall | Wipe binary, config, decoy, nginx, hooks |
+| **0** | Exit | Quit |
+
+#### Add → detail
+
+| # | Option | Use |
+|:---:|:---|:---|
+| 1 | **Anti-Filter** | Iran reverse · SNI · decoy · foreign node |
+| 2 | **Upstream** | Server B — tunnel egress |
+| 3 | **Entry** | Server A — client listen |
+| 4 | **Multi** | Multi-port / multi-location |
+| 5 | **Proxy** | SOCKS · HTTP · SS · Relay · MASQUE · … |
+| 6 | **Local forward** | listen → target on this host |
+| 7 | **Reverse** | tunnel · rtcp · rudp |
+| 8 | **More** | DNS · TUN · File · Redirect |
 
 ### Scenarios
 
-| Scenario | Menu | Roles |
+| Scenario | Path | Notes |
 |:---|:---|:---|
-| Anti-Filter | `2 → 1` | Iran = reverse panel · abroad = node · client by SNI |
-| Two-server (MWSS etc.) | `2 → 2` then `2 → 3` | B = Upstream · A = Entry → `127.0.0.1:port` |
-| Two-server MASQUE | same + transport `11` | B: `masque`+`http3` (UDP) · A: `masque`+`h3-masque` |
-| Multi port / location | `2 → 4` | Several B · per-port or selector |
-| Single-host proxy | `2 → 5` | SOCKS / HTTP / SS / Relay / MASQUE / … |
-| Local forward | `2 → 6` | listen → target on this host |
-| Reverse | `2 → 7` | tunnel / rtcp / rudp |
-| DNS · TUN · File · Redirect | `2 → 8` | Extra services |
+| Anti-Filter | `2 → 1` | Iran = panel · abroad = node · client via SNI |
+| Two-server MWSS | `2 → 2` then `2 → 3` | B first, then A · matching path |
+| Two-server MASQUE | same + transport `11` | UDP · B:`http3` · A:`h3-masque` |
+| Multi-entry | `2 → 4` | Per-port or selector |
+| Single-host proxy | `2 → 5` | No second hop |
+| Local forward | `2 → 6` | Port remap only |
+| Reverse | `2 → 7` | Behind NAT |
+| DNS / TUN / File | `2 → 8` | Extra services |
 
-### Install channels (menu `1`)
+### Install channels
 
-| # | Result |
-|:---:|:---|
-| 1 Stable | Release build — not reliable for MASQUE |
-| 2 Nightly | Registers masque; TCP CONNECT may still fail |
-| 3 Build patched | Source + MASQUE patch — preferred for HTTP/3 |
-| 4 Local binary | Install from path (e.g. `/tmp/gost-masque-fixed`) |
+| # | Channel | Guidance |
+|:---:|:---|:---|
+| 1 | **Stable** | Everyday use — not suitable for MASQUE |
+| 2 | **Nightly** | Registers masque; TCP CONNECT may be unstable |
+| 3 | **Build patched** | Source + MASQUE patch — preferred for HTTP/3 |
+| 4 | **Local binary** | Install from file (e.g. `scp` abroad → Iran) |
 
-Stable over a patched binary breaks MASQUE.
+> Updating with Stable over a patched binary breaks MASQUE.
 
 ### Transports
 
 | Preset | Layer |
 |:---|:---|
-| MWSS | TLS + WebSocket + mux |
-| WSS / TLS / uTLS / otls | TLS camouflage |
-| KCP / QUIC / gRPC | UDP or gRPC |
+| **MWSS** | TLS + WebSocket + mux |
+| WSS · TLS · uTLS · otls | TLS camouflage |
+| KCP · QUIC · gRPC | UDP / gRPC |
 | TCP | Lab only |
-| **MASQUE** | HTTP/3 · listener=`http3` (not `h3`) · dialer=`h3-masque` |
+| **MASQUE** | HTTP/3 · listener `http3` · dialer `h3-masque` |
 
-Both tunnel ends must share the same transport.
+Both ends share the same transport · WS/WSS/MWSS share the same path.
 
-### Paths
+### System paths
 
-| Path | Content |
+| Path | Role |
 |:---|:---|
 | `/usr/local/bin/gost` | Binary |
-| `/usr/local/bin/wild` | Menu (`wild gost`) |
-| `/etc/gost/config.json` | Config |
+| `/usr/local/bin/wild` | Menu entry |
+| `/etc/gost/config.json` | Main config |
 | `/etc/gost/wild-antifilter.json` | Anti-Filter state |
 | `/var/www/wild-gost-decoy` | Decoy |
-| `/etc/nginx/.../wild-gost-*.conf` | ACME / decoy nginx |
+| `/etc/nginx/.../wild-gost-*.conf` | ACME / decoy |
 
-### Docs
+### Documentation
 
-| # | Topic |
-|:---:|:---|
-| [01](docs/en/01-overview-menu.md) | Menu |
-| [02](docs/en/02-install.md) | Install |
-| [03](docs/en/03-choose-tunnel.md) | Tunnel choice |
-| [04](docs/en/04-antifilter.md) | Anti-Filter |
-| [05](docs/en/05-remote-forward.md) | Two-server MWSS |
-| [06](docs/en/06-masque.md) | MASQUE |
-| [07](docs/en/07-proxy-local-reverse.md) | Proxy / Forward / Reverse |
-| [08](docs/en/08-edit-logs.md) | Edit / Logs |
-| [09](docs/en/09-multi-entry.md) | Multi-entry |
-| [10](docs/en/10-dns-tun-file-redirect.md) | DNS / TUN / File / Redirect |
-| [11](docs/en/11-transports.md) | Transports |
-| [12](docs/en/12-antifilter-extras.md) | decoy / TLS / Doctor |
-| [13](docs/en/13-edit-advanced.md) | Advanced / Uninstall |
-| [14](docs/en/14-proxy-types.md) | Proxy types |
+| | | |
+|:---:|:---|:---|
+| [01 Menu](docs/en/01-overview-menu.md) | [02 Install](docs/en/02-install.md) | [03 Tunnel choice](docs/en/03-choose-tunnel.md) |
+| [04 Anti-Filter](docs/en/04-antifilter.md) | [05 MWSS](docs/en/05-remote-forward.md) | [06 MASQUE](docs/en/06-masque.md) |
+| [07 Proxy / Reverse](docs/en/07-proxy-local-reverse.md) | [08 Edit / Logs](docs/en/08-edit-logs.md) | [09 Multi-entry](docs/en/09-multi-entry.md) |
+| [10 DNS / TUN](docs/en/10-dns-tun-file-redirect.md) | [11 Transports](docs/en/11-transports.md) | [12 Decoy / TLS](docs/en/12-antifilter-extras.md) |
+| [13 Advanced](docs/en/13-edit-advanced.md) | [14 Proxy types](docs/en/14-proxy-types.md) | [Index](docs/README.md) |
 
-Index: [docs/README.md](docs/README.md) · Core: [gost.run](https://gost.run)
+Protocol reference: [gost.run](https://gost.run)
 
 ---
 
 ## License
 
-[MIT](LICENSE)
+Released under the [MIT License](LICENSE).

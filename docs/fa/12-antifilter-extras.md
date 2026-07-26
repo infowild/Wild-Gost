@@ -1,36 +1,91 @@
-# Anti-Filter — extras
+# Anti-Filter — جزئیات بیشتر (Decoy، TLS، Doctor)
 
-مسیر: `2 → 1`
+منوی پایه:
 
-| # | گزینه | کار |
+```text
+2) Add  →  1) Anti-Filter
+```
+
+راهنمای ساخت پنل و نود: [04](04-antifilter.md)  
+این صفحه گزینه‌های کمکی را کامل توضیح می‌دهد.
+
+---
+
+## نقشهٔ کل گزینه‌ها
+
+| # | گزینه | کار به زبان ساده |
 |:---:|:---|:---|
-| 1 | Iran panel | reverse + entry + decoy + نود اول |
-| 2 | Add node | hostname/SNI جدید · Tunnel ID جدید |
-| 3 | Foreign node | خارج dial به ایران |
-| 4 | Decoy only | فقط سایت فیک |
-| 5 | Status | `/etc/gost/wild-antifilter.json` |
-| 6 | Doctor | عیب‌یابی |
-| 7 | TLS cert | گواهی listener |
+| 1 | Iran panel | روی ایران: reverse + entry + decoy + نود اول |
+| 2 | Add node | نود جدید با hostname/SNI و Tunnel ID تازه |
+| 3 | Foreign node | روی خارج: dial به ایران |
+| 4 | Decoy only | فقط سایت فیک، بدون ساخت کل پنل |
+| 5 | Status | خواندن `/etc/gost/wild-antifilter.json` |
+| 6 | Doctor | عیب‌یابی قدم‌به‌قدم |
+| 7 | TLS cert | گرفتن یا گذاشتن گواهی برای listenerها |
 
-## Decoy (`4`)
+---
 
-| حالت | رفتار پروب |
+## Decoy only (`4`) — سایت فیک
+
+هدف: اسکنر یا پروب بدون اجازه، به‌جای سرویس واقعی یک صفحهٔ «عادی» ببیند.
+
+| حالت ویزارد | رفتار |
 |:---|:---|
-| File server | استاتیک |
-| HTTP + probeResist file | HTML فیک |
-| HTTP + probeResist 404 | 404 |
+| File server | پوشه/صفحه استاتیک سرو می‌شود |
+| HTTP + probeResist file | بدون auth، محتوای فایل فیک را می‌بیند |
+| HTTP + probeResist 404 | بدون auth، پاسخ 404 می‌گیرد |
 
-معمولاً `:80`.
+معمولاً روی پورت **80**. مسیر فایل‌ها اغلب:
 
-## TLS (`7`)
+```text
+/var/www/wild-gost-decoy
+```
 
-| گزینه | کار |
+---
+
+## TLS cert (`7`) — گواهی
+
+بدون گواهی درست، مرورگر/کلاینت TLS ممکن است خطا بدهد و SNI هم ضعیف‌تر کار کند.
+
+| گزینه | قدم‌ها به زبان ساده |
 |:---|:---|
-| Let's Encrypt + nginx | DNS → nginx `:80` ACME → `/etc/gost/certs/` |
-| مسیر موجود | cert/key آماده |
-| Self-signed | تست |
-| Skip | بدون TLS اجباری |
+| **Let's Encrypt + nginx** | دامنه را به IP سرور بده → nginx روی `:80` برای ACME → certbot گواهی می‌گیرد → کپی به `/etc/gost/certs/` → هوک تمدید نصب می‌شود |
+| **مسیر موجود** | اگر از قبل `fullchain` و `key` داری، مسیرشان را بده |
+| **Self-signed** | برای تست سریع؛ مرورگرها اعتماد نمی‌کنند |
+| **Skip** | فعلاً بدون اجبار TLS |
 
-اگر GOST `:80` را گرفته باشد، decoy به nginx منتقل می‌شود.
+### نکتهٔ پورت 80
 
-مسیریابی کاربر: Host/SNI · نه path. VLESS خام بدون TLS → معمولاً `malformed HTTP`.
+اگر خود GOST قبلاً `:80` را برای decoy گرفته باشد، ویزارد سعی می‌کند decoy را به nginx بدهد تا ACME کار کند.
+
+بعد از گرفتن گواهی می‌توانی آن را روی listenerهای antifilter اعمال کنی (سؤال Apply در ویزارد).
+
+---
+
+## Doctor (`6`)
+
+Doctor وضعیت را چاپ می‌کند، مثلاً:
+
+- سرویس gost فعال است یا نه  
+- پورت‌ها و نقش‌ها  
+- محتوای state  
+- نکات رایج خطا  
+
+خروجی را کپی کن؛ برای دیباگ خیلی مفید است.
+
+---
+
+## Status (`5`)
+
+فقط فایل state را نشان می‌دهد. برای دیدن دامنه، پورت‌ها، نودها و مسیر cert بعد از ساخت پنل.
+
+---
+
+## یادآوری مسیریابی کاربر
+
+| درست | غلط |
+|:---|:---|
+| چند نود با Host/SNI جدا (`us.domain.com`) | انتظار داشته باشی path مثل `/us` نود را عوض کند |
+| کلاینت با TLS و SNI درست | فرستادن VLESS خام بدون TLS به entrypoint (معمولاً `malformed HTTP`) |
+
+اگر هدف فقط forward ساده به سنایی است و نمی‌خواهی درگیر SNI شوی، سناریوی [Entry + Upstream](05-remote-forward.md) ساده‌تر است.

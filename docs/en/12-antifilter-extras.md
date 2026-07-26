@@ -1,36 +1,91 @@
-# Anti-Filter — extras
+# Anti-Filter — extras (Decoy, TLS, Doctor)
 
-Path: `2 → 1`
+Base menu:
 
-| # | Option | Action |
+```text
+2) Add  →  1) Anti-Filter
+```
+
+Panel/node build guide: [04](04-antifilter.md)  
+This page explains the helper options in full.
+
+---
+
+## Full option map
+
+| # | Option | Plain meaning |
 |:---:|:---|:---|
-| 1 | Iran panel | reverse + entry + decoy + first node |
-| 2 | Add node | new hostname/SNI · new Tunnel ID |
-| 3 | Foreign node | exit dials Iran |
-| 4 | Decoy only | fake site only |
-| 5 | Status | `/etc/gost/wild-antifilter.json` |
-| 6 | Doctor | diagnostics |
-| 7 | TLS cert | listener certificates |
+| 1 | Iran panel | On Iran: reverse + entry + decoy + first node |
+| 2 | Add node | New node with hostname/SNI and new Tunnel ID |
+| 3 | Foreign node | On abroad: dial Iran |
+| 4 | Decoy only | Fake site only, without full panel setup |
+| 5 | Status | Read `/etc/gost/wild-antifilter.json` |
+| 6 | Doctor | Step-by-step diagnostics |
+| 7 | TLS cert | Obtain or attach certificates for listeners |
 
-## Decoy (`4`)
+---
 
-| Mode | Probe sees |
+## Decoy only (`4`) — fake site
+
+Goal: unauthenticated probes see a “normal” page instead of the real service.
+
+| Wizard mode | Behavior |
 |:---|:---|
-| File server | static files |
-| HTTP + probeResist file | decoy HTML |
-| HTTP + probeResist 404 | 404 |
+| File server | Serves static files/page |
+| HTTP + probeResist file | Unauthenticated probes get decoy HTML |
+| HTTP + probeResist 404 | Unauthenticated probes get 404 |
 
-Usually `:80`.
+Usually on port **80**. Files often live at:
 
-## TLS (`7`)
+```text
+/var/www/wild-gost-decoy
+```
 
-| Option | Action |
+---
+
+## TLS cert (`7`) — certificates
+
+Without a proper cert, TLS clients may fail and SNI setups are weaker.
+
+| Option | Beginner steps |
 |:---|:---|
-| Let's Encrypt + nginx | DNS → nginx `:80` ACME → `/etc/gost/certs/` |
-| Existing paths | ready cert/key |
-| Self-signed | quick test |
-| Skip | no forced TLS |
+| **Let's Encrypt + nginx** | Point DNS to the server → nginx on `:80` for ACME → certbot issues cert → copy into `/etc/gost/certs/` → renew hooks installed |
+| **Existing paths** | Provide ready `fullchain` and `key` paths |
+| **Self-signed** | Quick test; browsers will not trust it |
+| **Skip** | No forced TLS for now |
 
-If GOST owns `:80`, decoy moves to nginx.
+### Port 80 note
 
-Client routing: Host/SNI · not path. Raw VLESS without TLS → often `malformed HTTP`.
+If GOST already owns `:80` for decoy, the wizard tries to move decoy to nginx so ACME can work.
+
+After obtaining a cert you can apply it to antifilter listeners (Apply prompt).
+
+---
+
+## Doctor (`6`)
+
+Doctor prints diagnostics such as:
+
+- whether gost is active  
+- ports and roles  
+- state contents  
+- common failure hints  
+
+Copy the output; it helps debugging a lot.
+
+---
+
+## Status (`5`)
+
+Shows the state file: domain, ports, nodes, cert paths after panel creation.
+
+---
+
+## User routing reminders
+
+| Correct | Incorrect |
+|:---|:---|
+| Separate nodes by Host/SNI (`us.domain.com`) | Expecting a path like `/us` to switch nodes |
+| Client with proper TLS + SNI | Raw VLESS without TLS into entrypoint (often `malformed HTTP`) |
+
+If you only want a simple forward to a panel and do not want SNI complexity, use [Entry + Upstream](05-remote-forward.md).

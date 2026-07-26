@@ -1,28 +1,70 @@
-# Transportها
+# Transportها (ضد DPI و اتصال)
 
-| # | Preset | لایه |
-|:---:|:---|:---|
-| 1 | MWSS | TLS + WS + mux |
-| 2 | WSS | TLS + WS |
-| 3 | TLS | HTTPS-like |
-| 4 | uTLS | TLS + fingerprint جعلی |
-| 5 | otls | obfs-TLS |
-| 6 | KCP | UDP + FEC |
-| 7 | QUIC | UDP/QUIC |
-| 8 | gRPC | روی TLS |
-| 9 | TCP | تست |
-| 10 | Advanced | listener/dialer دستی |
-| 11 | MASQUE | HTTP/3 · listener=`http3` · dialer=`h3-masque` |
+## Transport یعنی چه؟
 
-| قانون | |
+Transport «لباس» و روش حمل بین دو سر تونل است.  
+Handler می‌گوید سرویس چه نوعی است (مثلاً relay)؛ Transport می‌گوید روی چه لایه‌ای سوار شود (مثلاً WebSocket روی TLS).
+
+**قانون طلایی برای مبتدی:**
+
+> دو طرف تونل باید **یک transport** داشته باشند.  
+> اگر path دارد (مثل `/ws`)، آن هم باید یکی باشد.
+
+---
+
+## جدول presetهای رایج در ویزارد
+
+| # | نام | به زبان ساده | کی انتخابش کنم؟ |
+|:---:|:---|:---|:---|
+| 1 | **MWSS** | TLS + WebSocket + چندplex | پیشنهاد عمومی برای تونل دو سرور |
+| 2 | WSS | TLS + WebSocket بدون mux | جایگزین ساده‌تر MWSS |
+| 3 | TLS | شبیه HTTPS معمولی | وقتی WS لازم نیست |
+| 4 | uTLS | TLS با اثرانگشت جعلی مرورگر | وقتی fingerprint مهم است |
+| 5 | otls | obfs-TLS | استتار بیشتر |
+| 6 | KCP | UDP با اصلاح خطا | لینک پرقطع / پرلاس |
+| 7 | QUIC | UDP/QUIC | شبیه دنیای HTTP/3 |
+| 8 | gRPC | روی TLS | جایگزین WebSocket |
+| 9 | TCP | بدون رمز اضافه | فقط تست آزمایشگاهی |
+| 10 | Advanced | listener و dialer را دستی جدا می‌کنی | فقط اگر دقیق می‌دانی چه جفتی لازم است |
+| 11 | **MASQUE** | HTTP/3 + masque | تونل HTTP/3؛ راهنما: [06](06-masque.md) |
+
+---
+
+## Listener در مقابل Dialer
+
+| نقش | کجا ایستاده؟ | مثال |
+|:---|:---|:---|
+| **Listener** | سمتی که گوش می‌دهد | Upstream روی Server B |
+| **Dialer** | سمتی که تماس می‌گیرد | Entry روی Server A |
+
+در بیشتر presetها اسکریپت هر دو را با هم درست می‌چیند. در **Advanced** خودت جفت می‌کنی؛ جفت غلط = تونل مرده.
+
+### جفت MASQUE (یادت بماند)
+
+| سمت | مقدار درست |
 |:---|:---|
-| دو سر تونل | transport یکسان |
-| WS/WSS/MWSS | path یکسان |
-| SNI/Host | هم‌خوان با دامنه/cert |
+| B listener | `http3` (**نه** `h3`) |
+| A dialer | `h3-masque` |
+| connector | `masque` |
 
-| نقش | سمت |
+---
+
+## فیلدهای جانبی که ویزارد ممکن است بپرسد
+
+| فیلد | معنی ساده |
 |:---|:---|
-| Listener | پذیرنده (مثلاً B Upstream) |
-| Dialer | تماس‌گیرنده (مثلاً A Entry) |
+| Path | مسیر URL مثل `/ws` برای WebSocket |
+| Host / SNI | نام دامنه‌ای که در TLS دیده می‌شود |
+| Cert / Key | گواهی برای listenerهای TLS |
 
-MASQUE: B=`http3` (نه `h3`) · A=`h3-masque` + connector `masque`.
+اگر SNI/Host می‌گذاری، با دامنه و گواهی هم‌خوان باشد؛ وگرنه کلاینت یا نود مقابل ممکن است رد کند.
+
+---
+
+## پیشنهاد عملی برای شروع
+
+1. اولین تست روی شبکهٔ تمیز: حتی **TCP** برای اطمینان از منطق A/B  
+2. کار واقعی: **MWSS**  
+3. اگر UDP/HTTP3 می‌خواهی: **MASQUE** با باینری پچ‌شده  
+
+لیست کامل‌تر listener/dialer داخل منوی Advanced اسکریپت است؛ برای مبتدی لازم نیست همه را حفظ کنی.
