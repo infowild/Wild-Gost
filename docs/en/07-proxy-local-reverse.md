@@ -1,26 +1,26 @@
-# Proxy, local forward, reverse
+# Proxy · Forward · Reverse
 
-## Single-server proxy — `2 → 5`
+## Proxy — `2 → 5`
 
-Create SOCKS5 / HTTP / Shadowsocks / Relay / MASQUE on this host.
+Listen on this host. Types: [14](14-proxy-types.md)
 
 ```text
 socks5://IP:1080
 http://IP:8080
 ```
 
-Choosing MASQUE forces listener **http3**.
+MASQUE → listener forced `http3`.
 
-## Local port forward — `2 → 6`
+## Local forward — `2 → 6`
 
 ```text
-listen :8080  -->  192.168.1.10:80
+:8080 → 192.168.1.10:80
 ```
 
-Port mapping only — not an international tunnel.
+Port remap only; not an international tunnel.
 
-## Generic reverse — `2 → 7`
+## Reverse — `2 → 7`
 
-For NAT devices that dial a public server.
+tunnel / rtcp / rudp for NAT peers.
 
-For Iran censorship prefer **Anti-Filter** (`2 → 1`).
+Iran censorship → **Anti-Filter** (`2 → 1`).

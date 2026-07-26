@@ -1,39 +1,33 @@
-# منوی اسکریپت چیست؟
-
-دستور ورود به پنل:
+# منو
 
 ```bash
 sudo wild gost
 ```
 
-هر گزینه یک کار ساده دارد:
+| # | بخش | کار |
+|:---:|:---|:---|
+| 1 | Install / Update | باینری + اسکریپت |
+| 2 | Add | سرویس / تونل جدید |
+| 3 | Edit | ویرایش سرویس و chain |
+| 4 | Remove | حذف یک سرویس |
+| 5 | List | فهرست |
+| 6 | Service | start / stop / restart / status |
+| 7 | Logs | لاگ · خطا · debug |
+| 8 | Advanced | Bypass · Admission · Limiter · API · Metrics · JSON |
+| 9 | Uninstall | پاکسازی کامل |
+| 0 | Exit | خروج |
 
-| گزینه | یعنی چه؟ |
-|:---|:---|
-| **1 Install / Update** | باینری `gost` و خود اسکریپت مدیریت را نصب یا عوض می‌کند |
-| **2 Add** | تونل / سرویس جدید می‌سازد |
-| **3 Edit** | چیزهای موجود را عوض می‌کند (پورت، upstream، transport، …) |
-| **4 Remove** | یک سرویس را پاک می‌کند |
-| **5 List** | لیست سرویس‌ها را نشان می‌دهد |
-| **6 Service** | Start / Stop / Restart / Status |
-| **7 Logs** | لاگ زنده، خطا، سطح Debug |
-| **8 Advanced** | Bypass، Limiter، API، JSON خام |
-| **9 Uninstall** | همه‌چیز را پاک می‌کند (`/etc/gost` و …) |
-| **0 Exit** | خروج |
+## Add (`2`)
 
-## منوی Add (`2`)
+| # | گزینه | نقش |
+|:---:|:---|:---|
+| 1 | Anti-Filter | ریورس ایران · نود خارج dial می‌کند |
+| 2 | Upstream | Server B · خروج تونل دو سرور |
+| 3 | Entry single | Server A · یک listen |
+| 4 | Entry multi | چند پورت / چند B |
+| 5 | Proxy | SOCKS / HTTP / SS / … روی همین هاست |
+| 6 | Local forward | listen → target محلی |
+| 7 | Reverse | tunnel / rtcp / rudp |
+| 8 | More | DNS · TUN · File · Redirect |
 
-| گزینه | کاربرد ساده |
-|:---|:---|
-| **1 Anti-Filter** | برای فیلترینگ ایران؛ نود خارج به ایران وصل می‌شود (ریورس) |
-| **2 Upstream** | روی سرور خارج (B): محل خروج تونل دو سرور |
-| **3 Entry single** | روی سرور ایران (A): یک پورت برای کلاینت |
-| **4 Entry multi** | چند پورت / چند کشور روی A |
-| **5 Proxy** | SOCKS/HTTP/SS روی همین سرور |
-| **6 Local forward** | پورت این سرور → یک آدرس دیگر |
-| **7 Reverse** | ریورس عمومی (بدون wizard ضد فیلتر) |
-| **8 More** | DNS / TUN / فایل / Redirect |
-
-فایل کانفیگ واقعی همیشه این است:
-
-`/etc/gost/config.json`
+کانفیگ: `/etc/gost/config.json`

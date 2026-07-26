@@ -1,37 +1,28 @@
-# Transports (anti-DPI & links)
+# Transports
 
-Common wizard presets:
+| # | Preset | Layer |
+|:---:|:---|:---|
+| 1 | MWSS | TLS + WS + mux |
+| 2 | WSS | TLS + WS |
+| 3 | TLS | HTTPS-like |
+| 4 | uTLS | TLS + spoofed fingerprint |
+| 5 | otls | obfs-TLS |
+| 6 | KCP | UDP + FEC |
+| 7 | QUIC | UDP/QUIC |
+| 8 | gRPC | over TLS |
+| 9 | TCP | lab only |
+| 10 | Advanced | manual listener/dialer |
+| 11 | MASQUE | HTTP/3 · listener=`http3` · dialer=`h3-masque` |
 
-| # | Name | Simple layer | Advice |
-|:---:|:---|:---|:---|
-| 1 | **MWSS** | TLS + WebSocket + mux | General recommended |
-| 2 | WSS | TLS + WebSocket | Good |
-| 3 | TLS | HTTPS-like | Good |
-| 4 | uTLS | TLS with spoofed client fingerprint | Stronger vs fingerprinting |
-| 5 | otls | obfs-TLS | Camouflage |
-| 6 | KCP | UDP + FEC | Lossy links |
-| 7 | QUIC | UDP/QUIC | HTTP3-like |
-| 8 | gRPC | Over TLS | WS alternative |
-| 9 | TCP | No encryption | Testing only |
-| 10 | Advanced | Separate listener + dialer | Experts |
-| 11 | **MASQUE** | HTTP/3 + masque | HTTP3 tunnel; listener=`http3` |
-
-## Golden rule
-
-- **Both ends must use the same transport**  
-- For WS/WSS/MWSS keep the same **path**  
-- SNI/Host must match cert/domain when set  
-
-## Listener vs dialer
-
-| Role | Where |
+| Rule | |
 |:---|:---|
-| **Listener** | Side that accepts connections (e.g. Upstream on B) |
-| **Dialer** | Side that dials out (e.g. Entry on A) |
+| Both ends | same transport |
+| WS/WSS/MWSS | same path |
+| SNI/Host | match domain/cert |
 
-MASQUE:
+| Role | Side |
+|:---|:---|
+| Listener | acceptor (e.g. B Upstream) |
+| Dialer | caller (e.g. A Entry) |
 
-- B listener = **`http3`** (not `h3`)  
-- A dialer = **`h3-masque`** + connector **`masque`**  
-
-Advanced exposes every listener/dialer type in the script — use only when you know the pair.
+MASQUE: B=`http3` (not `h3`) · A=`h3-masque` + connector `masque`.

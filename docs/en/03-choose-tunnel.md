@@ -1,21 +1,16 @@
-# Which tunnel should I pick?
+# Tunnel choice
 
-| Need | Use | One-line meaning |
+| Need | Path | Roles |
 |:---|:---|:---|
-| Bypass filters; hide exit IP | **Anti-Filter** (`2 → 1`) | Exit dials Iran |
-| Client hits Iran; exit + panel on abroad | **Entry + Upstream** (`2 → 3` / `2 → 2`) | Classic two-server forward |
-| Same, but over HTTP/3 (UDP) | **MASQUE** | MASQUE upstream + MASQUE entry |
-| One server SOCKS/HTTP | **Proxy** (`2 → 5`) | Simplest |
-| Just move a port | **Local forward** (`2 → 6`) | e.g. `:8080` → LAN host |
-| Several countries / ports on Iran | **Entry multi** (`2 → 4`) | Multiple B or listens |
-
-## Two roles in a two-server tunnel
+| Filter · hide exit IP | `2 → 1` Anti-Filter | Exit → Iran |
+| Client → entry · exit abroad | `2 → 2` then `2 → 3` | B Upstream · A Entry |
+| Same over HTTP/3 | MASQUE (transport `11`) | `masque`+`http3` / `h3-masque` |
+| Multi port / country | `2 → 4` | Multi-entry |
+| Single-host SOCKS/HTTP | `2 → 5` | Proxy |
+| Port remap | `2 → 6` | Local forward |
 
 ```text
-Client  -->  Server A (entry)  -->  tunnel  -->  Server B (upstream)  -->  target (e.g. panel)
+Client → A (Entry) → tunnel → B (Upstream) → target
 ```
 
-- **A:** where users connect  
-- **B:** where traffic exits / panel listens  
-
-Always create **B first**, then **A**.
+Create **B** first, then **A**.

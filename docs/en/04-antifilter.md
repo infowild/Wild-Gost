@@ -1,27 +1,24 @@
-# Anti-Filter (Iran reverse)
+# Anti-Filter
 
-Exit nodes **dial Iran** (reverse). Users only see the Iran domain/IP.
+Exit dials Iran. Clients see only the Iran domain/IP.
 
 ```text
-Client ──SNI/Host──► Iran :443 (entrypoint)
-                         │
-Exit ──tunnel──► Iran :control-port ──► 127.0.0.1:panel on exit
+Client ──SNI──► Iran :443
+Exit ──tunnel──► Iran :control → 127.0.0.1:panel@Exit
 ```
 
-## Menu steps
-
 | Step | Where | Path |
-|:---|:---|:---|
+|:---:|:---|:---|
 | 1 | Iran | `2 → 1 → 1` Iran panel |
 | 2 | Abroad | `2 → 1 → 3` Foreign node (same Tunnel ID) |
-| 3 | Optional | `2 → 1 → 2` more nodes via hostname |
+| 3 | Optional | `2 → 1 → 2` more nodes |
 
-## Simple notes
+| Rule | Detail |
+|:---|:---|
+| Routing | Host / SNI — not path |
+| Transport | Match both ends (default MWSS) |
+| Decoy | usually `:80` |
+| State | `/etc/gost/wild-antifilter.json` |
+| Raw VLESS | needs TLS; bare inbound unfit for entrypoint |
 
-- Multi-node routing uses **hostname / SNI** (not URL paths)  
-- Transport must match both sides (default MWSS)  
-- Decoy on `:80` shows a normal page  
-- State: `/etc/gost/wild-antifilter.json`  
-- Entrypoint is not ideal for raw VLESS without TLS; use TLS+SNI or a plain Entry forward  
-
-Doctor: `2 → 1 → 6`
+Doctor: `2 → 1 → 6` · Extras: [12](12-antifilter-extras.md)

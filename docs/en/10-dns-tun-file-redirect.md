@@ -1,33 +1,31 @@
-# DNS, TUN, File, Redirect (More menu)
+# DNS · TUN · File · Redirect
 
-Path: `2 → 8) More`
+Path: `2 → 8`
 
-## 1) DNS Proxy
+## DNS
 
-- Listen port (default `53`)  
-- Upstream e.g. `udp://8.8.8.8:53` or `tls://1.1.1.1:853`  
-- Listener: dns/udp, tcp, or tls  
-
-Use when this host should answer DNS and forward queries upstream.
-
-Port 53 may conflict with `systemd-resolved` on Linux.
-
-## 2) TUN / TAP / TUNGO
-
-| Option | Meaning |
+| Field | Example |
 |:---|:---|
-| **TUN** | Layer-3 interface |
-| **TAP** | Layer-2 interface |
-| **TUNGO** | TUN2SOCKS — send TUN traffic via proxy/chain |
+| Listen | `53` |
+| Upstream | `udp://8.8.8.8:53` · `tls://1.1.1.1:853` |
+| Listener | dns/udp · tcp · tls |
 
-After creating the service, configure OS IP/routes yourself.
+May conflict with `systemd-resolved`.
 
-## 3) File server
+## TUN / TAP / TUNGO
 
-Serves a directory over the chosen listener — decoy site or static files.
+| Type | Layer |
+|:---|:---|
+| TUN | L3 |
+| TAP | L2 |
+| TUNGO | TUN → proxy/chain |
 
-## 4) Transparent redirect
+Configure OS IP/routes yourself.
 
-`red` (TCP) or `redu` (UDP).
+## File
 
-Needs **iptables/nftables** REDIRECT/TPROXY on the host. Creating the GOST service alone is not enough.
+Static directory on chosen listener (decoy / files).
+
+## Redirect
+
+`red` (TCP) · `redu` (UDP) — needs separate iptables/nftables REDIRECT/TPROXY.

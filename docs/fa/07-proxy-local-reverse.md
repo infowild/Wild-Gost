@@ -1,28 +1,26 @@
-# پروکسی، فوروارد محلی، Reverse
+# Proxy · Forward · Reverse
 
-## Proxy تک‌سروره — `2 → 5`
+## Proxy — `2 → 5`
 
-روی همین سرور SOCKS5 / HTTP / Shadowsocks / Relay / MASQUE می‌سازی.
-
-مثال:
+Listen روی همین هاست. انواع: [14](14-proxy-types.md)
 
 ```text
 socks5://IP:1080
 http://IP:8080
 ```
 
-اگر handler را MASQUE بگیری، listener خودکار **http3** می‌شود.
+MASQUE → listener اجباری `http3`.
 
-## Local port forward — `2 → 6`
+## Local forward — `2 → 6`
 
 ```text
-listen :8080  -->  192.168.1.10:80
+:8080 → 192.168.1.10:80
 ```
 
-فقط جابه‌جایی پورت روی همین ماشین/شبکه؛ تونل بین‌الملل نیست.
+فقط جابه‌جایی پورت؛ تونل بین‌الملل نیست.
 
-## Reverse عمومی — `2 → 7`
+## Reverse — `2 → 7`
 
-برای وقتی دستگاه پشت NAT است و باید به سرور عمومی وصل شود.
+tunnel / rtcp / rudp برای پشت NAT.
 
-برای ضد فیلتر ایران ترجیحاً از **Anti-Filter** (`2 → 1`) استفاده کن؛ آن wizard مخصوص‌تر است.
+ضد فیلتر ایران → **Anti-Filter** (`2 → 1`).

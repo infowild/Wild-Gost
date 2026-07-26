@@ -1,37 +1,33 @@
-# What the script menu does
-
-Open the panel:
+# Menu
 
 ```bash
 sudo wild gost
 ```
 
-| Option | Meaning |
-|:---|:---|
-| **1 Install / Update** | Installs or replaces the `gost` binary and management script |
-| **2 Add** | Create a new tunnel / service |
-| **3 Edit** | Change existing services (port, upstream, transport, …) |
-| **4 Remove** | Delete one service |
-| **5 List** | Show configured services |
-| **6 Service** | Start / Stop / Restart / Status |
-| **7 Logs** | Live logs, errors, debug level |
-| **8 Advanced** | Bypass, limiter, API, raw JSON |
-| **9 Uninstall** | Remove everything (`/etc/gost`, …) |
-| **0 Exit** | Quit |
+| # | Section | Action |
+|:---:|:---|:---|
+| 1 | Install / Update | Binary + script |
+| 2 | Add | New service / tunnel |
+| 3 | Edit | Edit service & chain |
+| 4 | Remove | Delete one service |
+| 5 | List | List services |
+| 6 | Service | start / stop / restart / status |
+| 7 | Logs | Live · errors · debug |
+| 8 | Advanced | Bypass · Admission · Limiter · API · Metrics · JSON |
+| 9 | Uninstall | Full wipe |
+| 0 | Exit | Quit |
 
-## Add menu (`2`)
+## Add (`2`)
 
-| Option | Simple use |
-|:---|:---|
-| **1 Anti-Filter** | Iran censorship; exit node dials Iran (reverse) |
-| **2 Upstream** | On exit server (B): outbound side of a two-server tunnel |
-| **3 Entry single** | On entry server (A): one public listen port for clients |
-| **4 Entry multi** | Several ports / several countries on A |
-| **5 Proxy** | SOCKS/HTTP/SS on this machine |
-| **6 Local forward** | This port → another address |
-| **7 Reverse** | Generic reverse (no anti-filter wizard) |
-| **8 More** | DNS / TUN / file / redirect |
+| # | Option | Role |
+|:---:|:---|:---|
+| 1 | Anti-Filter | Iran reverse · exit dials in |
+| 2 | Upstream | Server B · tunnel egress |
+| 3 | Entry single | Server A · one listen |
+| 4 | Entry multi | Multi port / multi B |
+| 5 | Proxy | SOCKS / HTTP / SS / … on this host |
+| 6 | Local forward | listen → local target |
+| 7 | Reverse | tunnel / rtcp / rudp |
+| 8 | More | DNS · TUN · File · Redirect |
 
-Real config file:
-
-`/etc/gost/config.json`
+Config: `/etc/gost/config.json`

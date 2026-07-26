@@ -1,31 +1,27 @@
-# Proxy types (Add → Proxy)
+# Proxy types
 
-Path: `2 → 5`
+Path: `2 → 5` — listen on this host.
 
-All listen on **this server** (unless you attach a separate upstream chain).
-
-| # | Type | Simple use |
+| # | Type | Role |
 |:---:|:---|:---|
-| 1 | **SOCKS5** | General proxy; optional UDP/BIND |
-| 2 | **SOCKS4** | Older SOCKS |
-| 3 | **HTTP** | HTTP proxy; optional UDP-over-TCP |
-| 4 | **HTTP2** | HTTP over HTTP/2 |
-| 5 | **HTTP3** | HTTP over HTTP/3 |
-| 6 | **Relay** | GOST relay (also used in two-server tunnels) |
-| 7 | **Shadowsocks** | SS with method + password |
-| 8 | **Auto** | Autodetect inbound protocol |
-| 9 | **SNI** | Route by SNI |
-| 10 | **SSHD** | SSHD-style |
-| 11 | **MASQUE** | MASQUE proxy; listener forced to **http3** |
-| 12 | **Serial** | Serial / specialty |
+| 1 | SOCKS5 | general · optional UDP/BIND |
+| 2 | SOCKS4 | legacy |
+| 3 | HTTP | HTTP proxy |
+| 4 | HTTP2 | over HTTP/2 |
+| 5 | HTTP3 | over HTTP/3 |
+| 6 | Relay | GOST relay |
+| 7 | Shadowsocks | method + password |
+| 8 | Auto | detect inbound |
+| 9 | SNI | SNI routing |
+| 10 | SSHD | SSHD-style |
+| 11 | MASQUE | listener forced `http3` |
+| 12 | Serial | serial |
 
-After the type, you pick a port and usually a **listener transport** (except MASQUE → fixed http3).
-
-### Client examples
+Then: port + listener transport (except MASQUE).
 
 ```text
 socks5://SERVER:1080
 http://SERVER:8080
 ```
 
-For two-server tunnels prefer **Upstream + Entry**; Proxy is mainly for a single host.
+Two-server tunnels → Upstream + Entry; Proxy is for single-host.

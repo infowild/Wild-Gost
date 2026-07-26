@@ -1,43 +1,36 @@
-# Anti-Filter — extra details
+# Anti-Filter — extras
 
-Base menu: `2 → 1`
+Path: `2 → 1`
 
-| # | Option | Job |
+| # | Option | Action |
 |:---:|:---|:---|
-| 1 | Iran panel | Iran: reverse + entry + decoy + first node |
-| 2 | Add node | New hostname/SNI → new Tunnel ID |
-| 3 | Foreign node | Exit dials Iran |
-| 4 | Decoy only | Fake site only |
-| 5 | Status | Read `/etc/gost/wild-antifilter.json` |
-| 6 | Doctor | Step-by-step diagnostics |
-| 7 | TLS cert | Certificates for GOST listeners |
+| 1 | Iran panel | reverse + entry + decoy + first node |
+| 2 | Add node | new hostname/SNI · new Tunnel ID |
+| 3 | Foreign node | exit dials Iran |
+| 4 | Decoy only | fake site only |
+| 5 | Status | `/etc/gost/wild-antifilter.json` |
+| 6 | Doctor | diagnostics |
+| 7 | TLS cert | listener certificates |
 
-## Decoy (option 4)
+## Decoy (`4`)
 
-| Mode | Meaning |
+| Mode | Probe sees |
 |:---|:---|
-| File server | Static page/files |
-| HTTP + probeResist file | Unauthenticated probes see decoy HTML |
-| HTTP + probeResist 404 | Probes get 404 |
+| File server | static files |
+| HTTP + probeResist file | decoy HTML |
+| HTTP + probeResist 404 | 404 |
 
-Usually on `:80` so scanners see a “normal” site.
+Usually `:80`.
 
-## TLS cert (option 7)
+## TLS (`7`)
 
-| Wizard choice | Use |
+| Option | Action |
 |:---|:---|
-| Let's Encrypt + nginx | Point DNS → nginx `:80` ACME → copy certs to `/etc/gost/certs/` |
-| Existing cert/key paths | You already have files |
-| Self-signed | Quick test |
-| Skip | GOST default / no forced TLS |
+| Let's Encrypt + nginx | DNS → nginx `:80` ACME → `/etc/gost/certs/` |
+| Existing paths | ready cert/key |
+| Self-signed | quick test |
+| Skip | no forced TLS |
 
-If GOST already owned `:80`, decoy moves to nginx so ACME can work.
+If GOST owns `:80`, decoy moves to nginx.
 
-## Doctor (option 6)
-
-Prints service/port/state hints. Keep the output for debugging.
-
-## User routing reminder
-
-- Nodes are split by **Host / SNI**, not paths like `/us`  
-- Raw VLESS without TLS into entrypoint often logs `malformed HTTP`  
+Client routing: Host/SNI · not path. Raw VLESS without TLS → often `malformed HTTP`.

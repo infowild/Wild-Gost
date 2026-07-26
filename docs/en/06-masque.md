@@ -1,43 +1,31 @@
-# MASQUE tunnel (HTTP/3)
+# MASQUE
 
-MASQUE carries traffic over **HTTP/3 / QUIC (UDP)**. It supports TCP and UDP; panel scenarios are usually **TCP**.
+HTTP/3 / QUIC over **UDP**.
 
 ```text
-Client --> A:8080 --> masque + h3-masque --> B:9443/udp (masque+http3) --> 127.0.0.1:8080
+Client → A:8080 → masque+h3-masque → B:9443/udp (masque+http3) → 127.0.0.1:8080
 ```
 
-## Binary requirement
+## Binary
 
-Old stable (`≤3.2.6`) has no masque. For reliable TCP CONNECT:
+| Case | Action |
+|:---|:---|
+| Old stable | No masque |
+| Preferred | Install → `3` on abroad |
+| Iran without Go | Install → `4` + `scp`'d file |
 
-- Install → **3** (patched build) on the foreign server  
-- On Iran if Go download fails → Install → **4** with an `scp`'d binary  
+## B — `2 → 2`
 
-## Step 1 — Server B
+Handler `4) MASQUE` · port e.g. `9443` · listener forced **`http3`** · firewall **UDP**.
 
-1. `2 → 2` Upstream  
-2. Handler: **4) MASQUE**  
-3. Port e.g. `9443`  
-4. Script forces listener **http3** (not `h3`)  
+## A — `2 → 3`
 
-Firewall: allow **UDP** on that port.
-
-## Step 2 — Server A
-
-1. `2 → 3` Entry single  
-2. Listen e.g. `8080` / TCP  
-3. Transport: **11) MASQUE**  
-4. Upstream: `IP_B:9443`  
-5. Target: `127.0.0.1:8080`
-
-## Important warnings
+Listen `8080` TCP · Transport `11) MASQUE` · Upstream `IP_B:9443` · Target `127.0.0.1:8080`.
 
 | Wrong | Right |
 |:---|:---|
-| listener `h3` | must be **`http3`** (`h3` is PHT, not MASQUE) |
-| unpatched binary | may hit H3 error `270` |
-| TCP-only firewall | MASQUE needs **UDP** |
+| listener `h3` | **`http3`** (`h3` = PHT) |
+| unpatched binary | H3 error `270` |
+| TCP-only firewall | UDP required |
 
-Empty `curl` replies to a panel inbound are normal. Success = `connect-tcp` logs on B.
-
-Security: channel is TLS inside QUIC; feature is still Alpha in GOST. Looks like HTTP/3; not a guaranteed censorship bypass.
+Success = `connect-tcp` on B. Empty `curl` to a panel inbound is normal.

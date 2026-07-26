@@ -1,41 +1,23 @@
-# Multi-port / multi-location Entry
+# Multi-entry
 
-Menu: `2 → 4) Entry multi-port / multi-location`
+Path: `2 → 4`
 
-Use when Iran needs several listen ports, or several Server B exits (e.g. US + DE).
+Several listens on A, or several Server B nodes.
 
-## What the wizard asks
-
-1. Config **group name**  
-2. **TCP or UDP**  
-3. **Connector** (relay / socks5 / http) — MASQUE transport forces connector `masque`  
-4. **Transport preset**  
-5. **Locations:** each Server B name + `IP:port`  
-6. **Ports:** comma list, e.g. `8080,8443`  
-7. **Target:** `127.0.0.1:PORT` or one custom target for all  
-8. **Mode:**
-
-### Mode 1 — port per location
-
-```text
-listen = PORT + (index × offset)
-Example offset=10000, base 8080:
-  US → :8080
-  DE → :18080
-```
-
-### Mode 2 — shared + selector
-
-Shared listen port(s); pick upstream with:
-
-| Strategy | Meaning |
+| Field | Value |
 |:---|:---|
-| **fifo** | Prefer first until it fails |
-| **round** | Round-robin |
-| **rand** | Random |
+| Proto | TCP / UDP |
+| Connector | relay / socks5 / http — MASQUE forces `masque` |
+| Transport | shared preset |
+| Locations | name + `IP:port` per B |
+| Ports | e.g. `8080,8443` |
+| Target | `127.0.0.1:PORT` or one fixed addr |
 
-## Notes
+## Mode
 
-- Build all B upstreams first  
-- Same transport on every node  
-- Verify each listen/upstream in List  
+| Mode | Behavior |
+|:---|:---|
+| Port per location | `listen = PORT + index×offset` — e.g. offset `10000`: US `:8080` · DE `:18080` |
+| Shared + selector | shared port · `fifo` / `round` / `rand` |
+
+Build all B upstreams first · matching transport · verify each listen/upstream in List.

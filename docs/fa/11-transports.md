@@ -1,37 +1,28 @@
-# Transportها (ضد-DPI و اتصال)
+# Transportها
 
-در ویزارد دو سرور / Anti-Filter معمولاً این preset را می‌بینی:
+| # | Preset | لایه |
+|:---:|:---|:---|
+| 1 | MWSS | TLS + WS + mux |
+| 2 | WSS | TLS + WS |
+| 3 | TLS | HTTPS-like |
+| 4 | uTLS | TLS + fingerprint جعلی |
+| 5 | otls | obfs-TLS |
+| 6 | KCP | UDP + FEC |
+| 7 | QUIC | UDP/QUIC |
+| 8 | gRPC | روی TLS |
+| 9 | TCP | تست |
+| 10 | Advanced | listener/dialer دستی |
+| 11 | MASQUE | HTTP/3 · listener=`http3` · dialer=`h3-masque` |
 
-| # | نام | لایه ساده | توصیه |
-|:---:|:---|:---|:---|
-| 1 | **MWSS** | TLS + WebSocket + multiplex | پیشنهادی عمومی |
-| 2 | WSS | TLS + WebSocket | خوب |
-| 3 | TLS | مثل HTTPS | خوب |
-| 4 | uTLS | TLS با اثر انگشت کلاینت جعلی | قوی‌تر در برابر fingerprint |
-| 5 | otls | obfs-TLS | استتار |
-| 6 | KCP | UDP + FEC | لینک پرلاس |
-| 7 | QUIC | UDP/QUIC | شبیه HTTP3 |
-| 8 | gRPC | روی TLS | جایگزین WS |
-| 9 | TCP | بدون رمز | فقط تست |
-| 10 | Advanced | listener و dialer جدا | کاربران پیشرفته |
-| 11 | **MASQUE** | HTTP/3 + masque | تونل HTTP3؛ listener=`http3` |
-
-## قانون طلایی
-
-- **دو طرف تونل باید یک transport داشته باشند**  
-- برای WS/WSS/MWSS مقدار **path** (مثل `/ws`) دو طرف یکی باشد  
-- SNI / Host اگر گذاشتی، با دامنه/گواهی هم‌خوان باشد  
-
-## Listener در مقابل Dialer
-
-| نقش | کجا |
+| قانون | |
 |:---|:---|
-| **Listener** | سمتی که گوش می‌دهد (مثلاً Upstream روی B) |
-| **Dialer** | سمتی که وصل می‌شود (مثلاً Entry روی A) |
+| دو سر تونل | transport یکسان |
+| WS/WSS/MWSS | path یکسان |
+| SNI/Host | هم‌خوان با دامنه/cert |
 
-در MASQUE:
+| نقش | سمت |
+|:---|:---|
+| Listener | پذیرنده (مثلاً B Upstream) |
+| Dialer | تماس‌گیرنده (مثلاً A Entry) |
 
-- B listener = **`http3`** (نه `h3`)  
-- A dialer = **`h3-masque`** + connector **`masque`**  
-
-گزینه Advanced همه‌ی انواع listener/dialer اسکریپت (tcp، ws، kcp، ssh، icmp، …) را نشان می‌دهد؛ فقط وقتی می‌دانی چه می‌کنی استفاده کن.
+MASQUE: B=`http3` (نه `h3`) · A=`h3-masque` + connector `masque`.

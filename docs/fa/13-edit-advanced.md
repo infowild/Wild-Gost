@@ -1,54 +1,37 @@
-# Edit، Advanced، Uninstall
+# Edit · Advanced · Uninstall
 
-## Edit — منو `3`
+## Edit — `3`
 
-معمولاً می‌توانی این‌ها را عوض کنی:
-
-- نام / آدرس listen  
-- نوع handler و listener  
-- metadata (مثل UDP، BIND، path، tunnel id)  
-- auth  
-- forwarder / target  
-- chain: آدرس upstream، connector، dialer، auth  
-
-اگر handler را **masque** کنی، listener به **http3 + enableDatagrams** اجبار می‌شود.
-
-## Advanced — منو `8`
-
-| گزینه | معنی ساده |
+| فیلد | |
 |:---|:---|
-| **Bypass** | بعضی مقصدها از پروکسی رد نشوند (یا برعکس در whitelist) |
-| **Admission** | اجازه/مسدود کردن IP کلاینت |
-| **Limiter** | سقف سرعت / نرخ اتصال |
-| **API / Metrics** | Web API، Prometheus، profiling |
-| **Log level** | info / debug / warn / error |
-| **Raw JSON** | دیدن کل `/etc/gost/config.json` |
+| Name / listen | |
+| Handler / listener | masque → اجباری `http3`+`enableDatagrams` |
+| Metadata | UDP · BIND · path · tunnel id |
+| Auth | |
+| Forwarder / target | |
+| Chain | upstream · connector · dialer · auth |
 
-Limiter اگر ست شود عمداً سرعت را کم می‌کند؛ اگر کندی دیدی اینجا را چک کن.
+## Advanced — `8`
 
-## Service — منو `6`
+| گزینه | کار |
+|:---|:---|
+| Bypass | استثنا / whitelist مقصد |
+| Admission | allow/deny IP کلاینت |
+| Limiter | سقف سرعت / نرخ |
+| API / Metrics | Web API · Prometheus · profiling |
+| Log level | info / debug / warn / error |
+| Raw JSON | `/etc/gost/config.json` |
 
-Start / Stop / Restart / Status همان `systemctl` برای `gost.service`.
+## Service — `6` · Logs — `7` · Remove — `4`
 
-## Logs — منو `7`
+`systemctl` برای `gost.service` · لاگ زنده/validate · حذف یک سرویس (+ chain مرتبط).
 
-لاگ زنده، فیلتر خطا، خروجی فایل، validate کانفیگ، تغییر سطح لاگ.
+## Uninstall — `9`
 
-## Remove — منو `4`
+| حذف می‌شود | اختیاری |
+|:---|:---|
+| باینری · unit · `/etc/gost` · decoy | LE فقط دامنه‌های Wild GOST |
+| nginx `wild-gost-*` · هوک certbot | `/usr/local/go` فقط با مارکر `.installed-by-wild-gost` |
+| `/tmp` MASQUE/build leftovers | |
 
-یک سرویس را پاک می‌کند؛ در صورت وجود، chain مرتبط هم ممکن است حذف شود.
-
-## Uninstall — منو `9`
-
-پاکسازی کامل‌تر:
-
-- باینری و unit  
-- `/etc/gost`  
-- decoy  
-- سایت‌های nginx با پیشوند `wild-gost-*`  
-- هوک‌های certbot مرتبط  
-- leftoverهای MASQUE/build در `/tmp` (`gost-masque-fixed`, `gost-build`, `x-build`)  
-- اختیاری: گواهی Let's Encrypt **فقط برای دامنه‌های تشخیص‌داده‌شدهٔ Wild GOST** (نه هر چیزی در certs)  
-- اختیاری: `/usr/local/go` **فقط اگر** با مارکر `.installed-by-wild-gost` نصب شده باشد  
-
-پکیج سیستم nginx/certbot را به‌طور پیش‌فرض حذف نمی‌کند.
+پکیج سیستم nginx/certbot نمی‌رود.

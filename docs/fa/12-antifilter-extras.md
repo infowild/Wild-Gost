@@ -1,43 +1,36 @@
-# Anti-Filter — جزئیات بیشتر
+# Anti-Filter — extras
 
-منوی پایه: `2 → 1`
+مسیر: `2 → 1`
 
 | # | گزینه | کار |
 |:---:|:---|:---|
-| 1 | Iran panel | سرور ایران: reverse + entry + decoy + نود اول |
-| 2 | Add node | hostname/SNI جدید → Tunnel ID جدید |
-| 3 | Foreign node | سرور خارج به ایران dial می‌کند |
+| 1 | Iran panel | reverse + entry + decoy + نود اول |
+| 2 | Add node | hostname/SNI جدید · Tunnel ID جدید |
+| 3 | Foreign node | خارج dial به ایران |
 | 4 | Decoy only | فقط سایت فیک |
-| 5 | Status | خواندن `/etc/gost/wild-antifilter.json` |
-| 6 | Doctor | عیب‌یابی مرحله‌ای |
-| 7 | TLS cert | گواهی برای listenerهای GOST |
+| 5 | Status | `/etc/gost/wild-antifilter.json` |
+| 6 | Doctor | عیب‌یابی |
+| 7 | TLS cert | گواهی listener |
 
-## Decoy (گزینه ۴)
+## Decoy (`4`)
 
-| حالت | معنی |
+| حالت | رفتار پروب |
 |:---|:---|
-| File server | صفحه/فایل استاتیک |
-| HTTP + probeResist file | پروب بدون auth فایل HTML فیک می‌بیند |
-| HTTP + probeResist 404 | پروب کد ۴۰۴ می‌گیرد |
+| File server | استاتیک |
+| HTTP + probeResist file | HTML فیک |
+| HTTP + probeResist 404 | 404 |
 
-معمولاً روی `:80` تا اسکنر سایت «عادی» ببیند.
+معمولاً `:80`.
 
-## TLS cert (گزینه ۷)
+## TLS (`7`)
 
-| گزینه ویزارد | کاربرد |
+| گزینه | کار |
 |:---|:---|
-| Let's Encrypt + nginx | DNS دامنه → nginx روی `:80` برای ACME → کپی cert به `/etc/gost/certs/` |
-| مسیر cert/key موجود | اگر گواهی از قبل داری |
-| Self-signed | تست سریع |
-| Skip | GOST خودش/بدون TLS اجباری |
+| Let's Encrypt + nginx | DNS → nginx `:80` ACME → `/etc/gost/certs/` |
+| مسیر موجود | cert/key آماده |
+| Self-signed | تست |
+| Skip | بدون TLS اجباری |
 
-اگر GOST قبلاً `:80` را گرفته باشد، decoy به nginx منتقل می‌شود تا ACME کار کند.
+اگر GOST `:80` را گرفته باشد، decoy به nginx منتقل می‌شود.
 
-## Doctor (گزینه ۶)
-
-وضعیت سرویس، پورت، state، نمونه dialer و نکات رایج را چاپ می‌کند. خروجی را برای دیباگ نگه دار.
-
-## یادآوری مسیریابی کاربر
-
-- چند نود با **Host / SNI** جدا می‌شوند، نه path مثل `/us`  
-- VLESS خام بدون TLS به entrypoint معمولاً `malformed HTTP` می‌دهد  
+مسیریابی کاربر: Host/SNI · نه path. VLESS خام بدون TLS → معمولاً `malformed HTTP`.
