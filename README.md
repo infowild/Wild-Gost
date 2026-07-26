@@ -39,16 +39,90 @@ sudo wild gost
 | دسترسی | root |
 | ابزار | `curl` یا `wget` · `jq` · `systemctl` |
 
-### معماری
+### معماری‌ها
+
+Wild GOST چند توپولوژی جدا دارد. قبل از ساخت، یکی را انتخاب کن.
+
+#### ۱) دو سرور — فوروارد (Entry → Upstream)
+
+کلاینت به A وصل می‌شود؛ A به B تونل می‌زند؛ B به هدف (مثلاً سنایی) می‌فرستد.  
+Transport: MWSS / WSS / TLS / … یا **MASQUE** (UDP).
 
 ```text
-┌─────────────┐         tunnel          ┌─────────────┐
-│  Client     │ ──────► │ Server A │ ───────────────► │ Server B │ ──► Target
-│             │   listen │  (Entry) │   MWSS/MASQUE   │(Upstream)│     e.g. panel
-└─────────────┘         └──────────┘                  └──────────┘
+Client ──► Server A (Entry) ════ tunnel ════► Server B (Upstream) ──► Target
+              listen              MWSS/MASQUE         relay/masque      127.0.0.1:port
 ```
 
-Anti-Filter معکوس است: نود خارج به ایران dial می‌کند؛ کلاینت فقط ایران را می‌بیند.
+منو: `2 → 2` روی B، بعد `2 → 3` روی A · راهنما: [05](docs/fa/05-remote-forward.md) · [06](docs/fa/06-masque.md)
+
+#### ۲) Anti-Filter — ریورس (خارج → ایران)
+
+نود خارج به ایران dial می‌کند. کلاینت فقط ایران را با SNI/Host می‌بیند.
+
+```text
+Client ──SNI──► Iran :443 (entrypoint)
+                     │
+Abroad node ══tunnel══► Iran :control ──► 127.0.0.1:panel @ Abroad
+```
+
+منو: `2 → 1` · راهنما: [04](docs/fa/04-antifilter.md)
+
+#### ۳) Multi-entry — چند پورت / چند لوکیشن
+
+یک Entry روی A به چند Server B وصل می‌شود (پورت جدا یا selector).
+
+```text
+                 ┌──► B1 (US)
+Client ──► A ────┼──► B2 (DE) ──► Target
+                 └──► B3 (...)
+```
+
+منو: `2 → 4` · راهنما: [09](docs/fa/09-multi-entry.md)
+
+#### ۴) Proxy تک‌سرور
+
+بدون Server دوم؛ کلاینت مستقیم به همین هاست.
+
+```text
+Client ──► Server (SOCKS/HTTP/SS/MASQUE/…) ──► Internet / Target
+```
+
+منو: `2 → 5` · راهنما: [14](docs/fa/14-proxy-types.md)
+
+#### ۵) Local forward
+
+فقط جابه‌جایی پورت روی همین ماشین/شبکه.
+
+```text
+Client ──► This host :listen ──► IP:port (LAN / local)
+```
+
+منو: `2 → 6`
+
+#### ۶) Reverse عمومی
+
+دستگاه پشت NAT به سرور عمومی dial می‌کند (tunnel / rtcp / rudp).  
+برای ضد فیلتر ایران ترجیحاً معماری ۲ (Anti-Filter).
+
+```text
+Device (NAT) ══reverse dial══► Public server ──► Target
+```
+
+منو: `2 → 7`
+
+#### ۷) More — DNS / TUN / File / Redirect
+
+سرویس‌های جانبی روی همین هاست؛ تونل دو سرور نیستند.
+
+منو: `2 → 8` · راهنما: [10](docs/fa/10-dns-tun-file-redirect.md)
+
+| معماری | جهت تونل | چند سرور؟ |
+|:---|:---|:---|
+| فوروارد Entry→Upstream | A → B | بله |
+| Anti-Filter | B → Iran (ریورس) | بله |
+| Multi-entry | A → چند B | بله |
+| Proxy / Forward / More | — | معمولاً یک هاست |
+| Reverse عمومی | دستگاه → سرور عمومی | بله |
 
 ### منوی اصلی
 
@@ -159,16 +233,90 @@ sudo wild gost
 | Access | root |
 | Tools | `curl` or `wget` · `jq` · `systemctl` |
 
-### Architecture
+### Architectures
+
+Wild GOST has several distinct topologies. Pick one before you build.
+
+#### 1) Two-server forward (Entry → Upstream)
+
+Client dials A; A tunnels to B; B forwards to the target (e.g. panel).  
+Transport: MWSS / WSS / TLS / … or **MASQUE** (UDP).
 
 ```text
-┌─────────────┐         tunnel          ┌─────────────┐
-│  Client     │ ──────► │ Server A │ ───────────────► │ Server B │ ──► Target
-│             │   listen │  (Entry) │   MWSS/MASQUE   │(Upstream)│     e.g. panel
-└─────────────┘         └──────────┘                  └──────────┘
+Client ──► Server A (Entry) ════ tunnel ════► Server B (Upstream) ──► Target
+              listen              MWSS/MASQUE         relay/masque      127.0.0.1:port
 ```
 
-Anti-Filter is reversed: the exit node dials Iran; clients only see Iran.
+Menu: `2 → 2` on B, then `2 → 3` on A · Docs: [05](docs/en/05-remote-forward.md) · [06](docs/en/06-masque.md)
+
+#### 2) Anti-Filter reverse (abroad → Iran)
+
+Abroad node dials Iran. Clients only see Iran via SNI/Host.
+
+```text
+Client ──SNI──► Iran :443 (entrypoint)
+                     │
+Abroad node ══tunnel══► Iran :control ──► 127.0.0.1:panel @ Abroad
+```
+
+Menu: `2 → 1` · Docs: [04](docs/en/04-antifilter.md)
+
+#### 3) Multi-entry — multi-port / multi-location
+
+One Entry on A reaches several Server B nodes (per-port or selector).
+
+```text
+                 ┌──► B1 (US)
+Client ──► A ────┼──► B2 (DE) ──► Target
+                 └──► B3 (...)
+```
+
+Menu: `2 → 4` · Docs: [09](docs/en/09-multi-entry.md)
+
+#### 4) Single-host Proxy
+
+No second server; client dials this host directly.
+
+```text
+Client ──► Server (SOCKS/HTTP/SS/MASQUE/…) ──► Internet / Target
+```
+
+Menu: `2 → 5` · Docs: [14](docs/en/14-proxy-types.md)
+
+#### 5) Local forward
+
+Port remap on the same machine/LAN only.
+
+```text
+Client ──► This host :listen ──► IP:port (LAN / local)
+```
+
+Menu: `2 → 6`
+
+#### 6) Generic Reverse
+
+NAT device dials a public server (tunnel / rtcp / rudp).  
+For Iran-focused reverse, prefer architecture 2 (Anti-Filter).
+
+```text
+Device (NAT) ══reverse dial══► Public server ──► Target
+```
+
+Menu: `2 → 7`
+
+#### 7) More — DNS / TUN / File / Redirect
+
+Side services on this host; not two-server tunnels.
+
+Menu: `2 → 8` · Docs: [10](docs/en/10-dns-tun-file-redirect.md)
+
+| Architecture | Tunnel direction | Multi-server? |
+|:---|:---|:---|
+| Forward Entry→Upstream | A → B | Yes |
+| Anti-Filter | B → Iran (reverse) | Yes |
+| Multi-entry | A → several B | Yes |
+| Proxy / Forward / More | — | Usually one host |
+| Generic Reverse | device → public server | Yes |
 
 ### Main menu
 
