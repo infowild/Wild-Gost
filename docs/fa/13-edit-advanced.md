@@ -47,6 +47,8 @@ Start / Stop / Restart / Status همان `systemctl` برای `gost.service`.
 - decoy  
 - سایت‌های nginx با پیشوند `wild-gost-*`  
 - هوک‌های certbot مرتبط  
-- اختیاری: گواهی Let's Encrypt  
+- leftoverهای MASQUE/build در `/tmp` (`gost-masque-fixed`, `gost-build`, `x-build`)  
+- اختیاری: گواهی Let's Encrypt **فقط برای دامنه‌های تشخیص‌داده‌شدهٔ Wild GOST** (نه هر چیزی در certs)  
+- اختیاری: `/usr/local/go` **فقط اگر** با مارکر `.installed-by-wild-gost` نصب شده باشد  
 
 پکیج سیستم nginx/certbot را به‌طور پیش‌فرض حذف نمی‌کند.

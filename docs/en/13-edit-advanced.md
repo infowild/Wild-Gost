@@ -47,6 +47,8 @@ Broader cleanup:
 - Decoy  
 - nginx sites prefixed `wild-gost-*`  
 - Related certbot hooks  
-- Optional Let's Encrypt wipe  
+- MASQUE/build leftovers under `/tmp` (`gost-masque-fixed`, `gost-build`, `x-build`)  
+- Optional: Let's Encrypt certs **only for detected Wild GOST domains** (not every file under certs)  
+- Optional: `/usr/local/go` **only if** marked `.installed-by-wild-gost`  
 
 System packages nginx/certbot are left installed by default.
